@@ -186,7 +186,7 @@ if not st.session_state.logged_in:
                 st.session_state.day = team["day"]
 
                 st.success(f"Welcome back, {team_name}! You have ${team['money']}.")
-                st.switch_page("pages/Leaderboard.py")
+                st.switch_page("pages/4_Leaderboard.py")
             else:
                 st.error("Incorrect password. Please try again.")
         else:

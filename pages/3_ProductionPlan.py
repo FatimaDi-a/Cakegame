@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 # ======================================
 # ⚙️ GAME DAY SETUP
 # ======================================
-GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-3")
+GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
 today = date.today()
 day_number = (today - start_date).days + 1
@@ -30,6 +30,20 @@ st.session_state.day = day_number
 # ======================================
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
+    st.stop()
+from datetime import date
+
+# ❌ Specific real-world calendar dates when the game is closed
+CLOSED_DATES = [
+    "2025-11-22",
+    "2025-11-24",
+    "2025-11-26"
+]
+
+today = date.today().isoformat()
+
+if today in CLOSED_DATES:
+    st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
     st.stop()
 
 # ======================================
@@ -177,7 +191,7 @@ st.markdown(f"""
 <div style="background: linear-gradient(90deg, #F5D2A4, #E0B070);
 padding: 0.6rem 1rem; border-radius: 10px; text-align: center;
 color: #4B2E05; font-weight: 700; font-size: 1.2rem; margin-bottom: 1.2rem;">
-📅 <span style="font-size:1.3rem;">Day {day_number}</span>
+📅 <span style="font-size:1.3rem;">Week {day_number}</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -267,23 +281,25 @@ st.markdown(
 )
 
 # Build initial production plan dataframe
-rows = []
+# --- Build pivot-style production table ---
+plan_rows = []
 for _, cake_row in cakes_df.iterrows():
     cake_name = cake_row["name"]
     min_units = int(cake_row["min_units_if_made"])
+    
+    # 👇 Show "min" next to the cake name
+    display_name = f"{cake_name} (min {min_units})"
+    
+    row = {"Cake (min qty)": display_name}
     for ch in channels:
-        rows.append({
-            "Cake": cake_name,
-            "Channel": ch,
-            "Minimum Batch (if produced)": min_units,
-            "Planned Qty": 0
-        })
+        row[ch] = 0
+    plan_rows.append(row)
 
-plan_df = pd.DataFrame(rows)
+plan_df = pd.DataFrame(plan_rows)
 
 st.markdown("Enter your planned production quantity for each cake and channel below:")
 
-# Editable table for production plan
+# Editable wide-format table
 edited_plan = st.data_editor(
     plan_df,
     use_container_width=True,
@@ -291,35 +307,39 @@ edited_plan = st.data_editor(
     hide_index=True,
     key="production_table",
     column_config={
-        "Cake": st.column_config.Column(disabled=True),
-        "Channel": st.column_config.Column(disabled=True),
-        "Minimum Batch (if produced)": st.column_config.Column(disabled=True),
-        "Planned Qty": st.column_config.NumberColumn("Planned Qty", min_value=0, step=1),
+        "Cake (min qty)": st.column_config.Column(disabled=True, width="medium"),
+        **{ch: st.column_config.NumberColumn(ch, min_value=0, step=1) for ch in channels},
     },
 )
 
+
+
 # --- Enforce minimum batch constraint (across all channels) ---
+# --- Convert wide table back into long format for backend logic ---
 plan_entries = []
 violations = []
 min_batch_map = {r["name"]: int(r["min_units_if_made"]) for _, r in cakes_df.iterrows()}
 
-# Group by cake to check combined total across channels
-totals = edited_plan.groupby("Cake")["Planned Qty"].sum().to_dict()
-
+totals = {}
 for _, row in edited_plan.iterrows():
-    cake = row["Cake"]
-    total_for_cake = totals.get(cake, 0)
+    # Extract the real cake name (before "(min ...)")
+    cake = row["Cake (min qty)"].split(" (min")[0].strip()
     min_required = min_batch_map[cake]
+    total_qty = sum(row[ch] for ch in channels)
+    totals[cake] = total_qty
 
-    if 0 < total_for_cake < min_required:
+    if 0 < total_qty < min_required:
         violations.append((cake, min_required))
 
-    if row["Planned Qty"] > 0:
-        plan_entries.append({
-            "cake": cake,
-            "channel": row["Channel"],
-            "qty": row["Planned Qty"]
-        })
+    for ch in channels:
+        if row[ch] > 0:
+            plan_entries.append({
+                "cake": cake,
+                "channel": ch,
+                "qty": row[ch]
+            })
+
+
 
 # --- Show warnings for batch violations ---
 # --- Show warnings for batch violations ---
@@ -372,12 +392,14 @@ if demand_df.empty:
 cake_totals = plan_df.groupby("cake")["qty"].sum().reset_index() if not plan_df.empty else pd.DataFrame(columns=["cake", "qty"])
 
 # Capacity requirements
-required = {"prep": 0, "oven": 0, "package": 0}
+required = {"prep": 0, "oven": 0, "package": 0, "oven rental": 0}
 for _, r in cakes_df.iterrows():
     cake_name = r["name"]
     qty = float(cake_totals.loc[cake_totals["cake"] == cake_name, "qty"].values[0]) if cake_name in cake_totals["cake"].values else 0
     required["prep"] += qty * (r["prep_min_per_unit"] + r["decor_min_per_unit"] + r["prep_setup_min_per_batch"]/r["batch_size_units"])
     required["oven"] += (qty / r["batch_size_units"]) * (r["oven_min_per_batch"] + r["oven_load_unload_min_per_batch"])
+    # Oven rental hours = same as oven time required
+    required["oven rental"] += required["oven"]
     required["package"] += qty * r["pack_min_per_unit"]
 
 capacity_feasible = all(required[k] <= capacity_totals.get(k, 0) + 1e-9 for k in required)
@@ -477,77 +499,107 @@ else:
 # 📊 SUMMARY
 # ======================================
 st.markdown("---")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Prep Hours", f"{required['prep']:.2f} / {capacity_totals.get('prep',0):.2f}")
 c2.metric("Oven Hours", f"{required['oven']:.2f} / {capacity_totals.get('oven',0):.2f}")
-c3.metric("Pack Hours", f"{required['package']:.2f} / {capacity_totals.get('package',0):.2f}")
-c4.metric("Profit (Revenue)", f"${profit_today:,.2f}")
+c3.metric("Oven Rental", f"{required['oven rental']:.2f} / {capacity_totals.get('oven rental',0):.2f}")
+c4.metric("Pack Hours", f"{required['package']:.2f} / {capacity_totals.get('package',0):.2f}")
+c5.metric("Profit (Revenue)", f"${profit_today:,.2f}")
 
 if not capacity_feasible:
-    st.error("❌ Capacity exceeded! Adjust your plan.")
+    overused = [k for k in required if required[k] > capacity_totals.get(k, 0)]
+    st.error(f"❌ Capacity exceeded for: {', '.join([k.title() for k in overused])}. Please adjust your plan.")
+
 elif not ingredient_feasible:
     st.error("❌ Not enough ingredients available!")
 else:
     st.success("✅ Feasible production plan!")
 
 # ======================================
-# 💾 SAVE PLAN
+# 💾 SAVE PLAN (with confirmation, same style as demand page)
 # ======================================
-if capacity_feasible and ingredient_feasible and st.button("💾 Save Production Plan"):
-    today_str = today.isoformat()
-    existing = supabase.table("production_plans") \
-        .select("id").eq("team_name", st.session_state.team_name) \
-        .gte("inserted_at", f"{today_str}T00:00:00") \
-        .lte("inserted_at", f"{today_str}T23:59:59") \
-        .execute()
+if capacity_feasible and ingredient_feasible:
 
-    if existing.data:
-        st.warning("⚠️ You already submitted today's production plan. Try again tomorrow!")
-    else:
-        try:
-            # --- Deduct ingredients
-            for ing, used_qty in ingredient_needs.items():
-                new_qty = max(ingredient_stock.get(ing, 0) - used_qty, 0)
-                supabase.table("inventory").update({
-                    "quantity": new_qty,
-                    "updated_at": datetime.utcnow().isoformat()
-                }).eq("team_name", st.session_state.team_name) \
-                 .eq("category", "ingredient") \
-                 .ilike("resource_name", f"%{ing}%").execute()
+    if "confirm_submit_plan" not in st.session_state:
+        st.session_state.confirm_submit_plan = False
 
-            # --- Deduct capacity hours
-            for cap, used in required.items():
-                new_value = max(capacity_totals.get(cap, 0) - used, 0)
-                supabase.table("inventory").update({
-                    "quantity": new_value,
-                    "updated_at": datetime.utcnow().isoformat()
-                }).eq("team_name", st.session_state.team_name) \
-                 .eq("category", "capacity") \
-                 .ilike("resource_name", f"%{cap}%").execute()
+    # Step 1: First click → ask for confirmation
+    if st.button("💾 Save Production Plan"):
+        if not plan_entries:
+            st.warning("⚠️ Please enter your production plan before saving.")
+            st.stop()
+
+        # show confirmation step
+        st.session_state.confirm_submit_plan = True
+        st.rerun()
+
+    # Step 2: Confirmation step
+    if st.session_state.confirm_submit_plan:
+        st.warning("⚠️ Are you sure you want to save your production plan? This can only be done once per day!")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Yes, save now"):
+                try:
+                    today_str = today.isoformat()
+                    existing = supabase.table("production_plans") \
+                        .select("id").eq("team_name", st.session_state.team_name) \
+                        .gte("inserted_at", f"{today_str}T00:00:00") \
+                        .lte("inserted_at", f"{today_str}T23:59:59") \
+                        .execute()
+
+                    if existing.data:
+                        st.warning("⚠️ You already submitted today's production plan. Try again tomorrow!")
+                        st.session_state.confirm_submit_plan = False
+                        st.stop()
+
+                    # --- Deduct ingredients
+                    for ing, used_qty in ingredient_needs.items():
+                        new_qty = max(ingredient_stock.get(ing, 0) - used_qty, 0)
+                        supabase.table("inventory").update({
+                            "quantity": new_qty,
+                            "updated_at": datetime.utcnow().isoformat()
+                        }).eq("team_name", st.session_state.team_name) \
+                         .eq("category", "ingredient") \
+                         .ilike("resource_name", f"%{ing}%").execute()
+
+                    # --- Deduct capacity hours
+                    for cap, used in required.items():
+                        new_value = max(capacity_totals.get(cap, 0) - used, 0)
+                        supabase.table("inventory").update({
+                            "quantity": new_value,
+                            "updated_at": datetime.utcnow().isoformat()
+                        }).eq("team_name", st.session_state.team_name) \
+                         .eq("category", "capacity") \
+                         .ilike("resource_name", f"%{cap}%").execute()
+
+                    # --- Save record
+                    payload = {
+                        "team_name": st.session_state.team_name,
+                        "plan_json": json.dumps(plan_entries),
+                        "profit_usd": float(profit_today),
+                        "required_json": json.dumps(required),
+                        "day_number": day_number,
+                    }
+
+                    supabase.table("production_plans").insert(payload).execute()
+
+                    st.success(f"✅ Plan saved! Expected Profit: ${profit_today:,.2f}")
+                    st.session_state.confirm_submit_plan = False
+
+                except Exception as e:
+                    st.error("❌ Failed to save production plan.")
+                    st.exception(e)
+                    st.session_state.confirm_submit_plan = False
+
+        with col2:
+            if st.button("❌ Cancel"):
+                st.session_state.confirm_submit_plan = False
+                st.info("Submission cancelled.")
 
 
-            # --- Save record
-            payload = {
-                "team_name": st.session_state.team_name,
-                "plan_json": json.dumps(plan_entries),
-                "profit_usd": float(profit_today),
-                "required_json": json.dumps(required),
-            }
-            supabase.table("production_plans").insert(payload).execute()
 
-            st.success(f"✅ Plan saved! Expected Profit: ${profit_today:,.2f} ")
 
-        except Exception as e:
-            st.error("❌ Failed to save production plan.")
-            st.exception(e)
-
-# ======================================
-# 📊 VISUALIZATION BY CHANNEL
-# ======================================
-if not plan_df.empty:
-    st.markdown("### 📦 Production Summary by Channel")
-    pivot = plan_df.groupby(["channel", "cake"])["qty"].sum().unstack(fill_value=0)
-    st.bar_chart(pivot)
 
 # ======================================
 # 📜 HISTORY

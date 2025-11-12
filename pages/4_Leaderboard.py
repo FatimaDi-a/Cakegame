@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Leaderboard Page - Cake Business Simulation
-Stylish warm leaderboard with caramel-ivory theme
+Now showing only Total Business Value (Cash + Stock)
 """
 
 import streamlit as st
@@ -15,16 +15,13 @@ from datetime import date, datetime
 from utils.finalize_day import finalize_day
 import pytz
 
-
 # =====================================
 # 📅 GAME DAY CALCULATION
 # =====================================
-GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-04")
+GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-
 today = date.today()
-day_number = (today - start_date).days + 1  # Day 1 starts on the start date
-
+day_number = (today - start_date).days + 1
 
 # =====================================
 # 🔒 LOGIN CHECK
@@ -32,6 +29,19 @@ day_number = (today - start_date).days + 1  # Day 1 starts on the start date
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
     st.switch_page("Login.py")
+    st.stop()
+    
+# ❌ Specific real-world calendar dates when the game is closed
+CLOSED_DATES = [
+    "2025-11-22",
+    "2025-11-24",
+    "2025-11-26"
+]
+
+today = date.today().isoformat()
+
+if today in CLOSED_DATES:
+    st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
     st.stop()
 
 # =====================================
@@ -50,29 +60,20 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # =====================================
-# 🕛 AUTO FINALIZATION CHECK (at midnight)
+# 🕛 AUTO FINALIZATION
 # =====================================
-def auto_finalize_previous_day():
-    tz = pytz.timezone("Asia/Dubai")
-    now = datetime.now(tz)
-    today = date.today()
-
-    # Only run once per day, between 00:00 and 00:10
-    if now.hour == 0 and now.minute < 10:
-        last_finalized = st.session_state.get("last_finalized_day", None)
-        if last_finalized == today:
-            return
-
-        st.info("🕛 Finalizing profits for yesterday...")
+def auto_finalize_once_per_day():
+    """Run finalize_day() once per calendar day when leaderboard is first opened."""
+    today_str = str(date.today())
+    if st.session_state.get("last_finalized_day") != today_str:
         try:
-            message = finalize_day()
-            st.success(message)
-            st.session_state["last_finalized_day"] = today
+            msg = finalize_day()
+            st.session_state["last_finalized_day"] = today_str
         except Exception as e:
-            st.error("❌ Finalization failed.")
+            st.error("❌ Auto-finalization failed.")
             st.exception(e)
 
-auto_finalize_previous_day()
+auto_finalize_once_per_day()
 
 # =====================================
 # 🎨 PAGE STYLING
@@ -85,29 +86,19 @@ st.markdown(
     html, body, [class*="css"] {
         font-size: 12px !important;
     }
-
     .stApp {
         background-color: #FFF9F3;
     }
-
     h1, h2, h3, h4, h5, h6 {
         color: #4B2E05 !important;
         text-shadow: 1px 1px 2px rgba(150,100,50,0.3);
         font-family: 'Poppins', sans-serif;
     }
-
-    .stSubheader, .stMarkdown p {
-        color: #3B2C1A !important;
-        font-size: 1.8rem; 
-        line-height: 1.6;
-    }
-
     hr {
         border: none;
         border-top: 1px solid rgba(120,80,40,0.25);
         margin: 1.5rem 0;
     }
-
     .stButton>button {
         background-color: #F5D2A4 !important;
         color: #4B2E05 !important;
@@ -117,37 +108,20 @@ st.markdown(
         box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.25);
         transition: all 0.2s ease-in-out;
     }
-
     .stButton>button:hover {
         background-color: #E0B070 !important;
         transform: scale(1.05);
-    }
-
-    [data-testid="stMetricValue"] {
-        color: #4B2E05 !important;
-    }
-
-    div[data-testid="stExpander"] {
-        background-color: rgba(255, 247, 234, 0.95);
-        border-radius: 12px;
-        border: 1px solid rgba(180,140,80,0.2);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-
-    canvas {
-        background-color: #FFF9F3 !important;
-        border-radius: 12px;
-    }
-
-    .stButton>button[kind="secondary"] {
-        background-color: #FFF2E0 !important;
-        color: #4B2E05 !important;
-        border: 1px solid #D6A76E !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
+
+# =====================================
+# 🏆 HEADER
+# =====================================
+st.title("🏆 Cake Business Leaderboard")
+st.write(f"Welcome, **{st.session_state.team_name}** 👋")
 
 if "day" in st.session_state:
     st.markdown(
@@ -169,41 +143,36 @@ if "day" in st.session_state:
         unsafe_allow_html=True
     )
 
-# =====================================
-# 🏆 HEADER
-# =====================================
-st.title("🏆 Cake Business Leaderboard")
-st.write(f"Welcome, **{st.session_state.team_name}** 👋")
-st.write(f"Your current balance: **${st.session_state.money:,.2f}**")
-
-st.caption(f"📅 Last updated automatically at midnight — showing profits finalized from Day {day_number-1}.")
 
 # =====================================
-# 💰 LOAD DATA
+# 💰 LOAD & DISPLAY DATA
 # =====================================
 try:
-    response = supabase.table("teams").select("team_name, money").execute()
+    response = supabase.table("teams").select("team_name, money, stock_value, total_value").execute()
     teams = pd.DataFrame(response.data)
 
     if teams.empty:
         st.info("No team data found yet.")
     else:
-        # Sort by balance
-        teams = teams.sort_values(by="money", ascending=False).reset_index(drop=True)
+        # Sort by total value
+        teams = teams.sort_values(by="total_value", ascending=False).reset_index(drop=True)
 
-        # Add rank + medals
+        # Rank + medals
         medals = ["🥇", "🥈", "🥉"]
         teams.insert(0, "Rank", [medals[i] if i < 3 else str(i + 1) for i in range(len(teams))])
 
-        # Format money
-        teams["money"] = teams["money"].map(lambda x: f"${x:,.2f}")
+        # Format currency
+        teams["total_value"] = teams["total_value"].map(lambda x: f"${x:,.2f}")
 
         # Rename columns
-        teams.rename(columns={"team_name": "Team", "money": "Balance"}, inplace=True)
+        teams.rename(columns={
+            "team_name": "Team",
+            "total_value": "Total Value 💰"
+        }, inplace=True)
 
-        # === Table styling without highlight ===
+        # Stylish table
         styled = (
-            teams[["Rank", "Team", "Balance"]]
+            teams[["Rank", "Team", "Total Value 💰"]]
             .style.set_table_styles([
                 {"selector": "th", "props": [
                     ("font-size", "1.1rem"),
@@ -224,19 +193,14 @@ try:
             ])
         )
 
-
-        st.dataframe(
-            styled,
-            use_container_width=True,
-            height=450
-        )
+        st.dataframe(styled, use_container_width=True, height=500)
 
 except Exception as e:
     st.error("❌ Failed to load leaderboard data.")
     st.exception(e)
 
 # =====================================
-# 🚪 LOGOUT BUTTON
+# 🚪 LOGOUT
 # =====================================
 st.divider()
 if st.button("🚪 Log out"):
