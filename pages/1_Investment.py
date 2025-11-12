@@ -16,12 +16,12 @@ from datetime import date, datetime
 
 GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-
 today = date.today()
-day_number = (today - start_date).days + 1  # Day 1 starts on the start date
 
-# Save in session state
+# Ensure day_number never goes below 1 before the game starts
+day_number = max(1, (today - start_date).days + 1)
 st.session_state.day = day_number
+
 
 # ✅ Handle reset triggered after save
 if st.session_state.get("reset_tables", False):

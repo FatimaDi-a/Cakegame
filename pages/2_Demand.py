@@ -24,9 +24,11 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
 today = date.today()
-day_number = (today - start_date).days + 1
 
+# Ensure day_number never goes below 1 before the game starts
+day_number = max(1, (today - start_date).days + 1)
 st.session_state.day = day_number
+
 # =====================================
 # 🔒 LOGIN CHECK
 # =====================================
