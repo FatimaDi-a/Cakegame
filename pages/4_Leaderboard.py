@@ -137,7 +137,7 @@ if "day" in st.session_state:
             margin-bottom: 1.2rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         ">
-            📅 <span style="font-size:1.5rem;">Day {st.session_state.day}</span>
+            📅 <span style="font-size:1.5rem;">Week {st.session_state.day}</span>
         </div>
         """,
         unsafe_allow_html=True
