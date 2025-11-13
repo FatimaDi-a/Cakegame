@@ -182,6 +182,17 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+                                    
+st.markdown("""
+<style>
+button[disabled], button[disabled]:hover {
+    cursor: not-allowed !important;
+    opacity: 0.6 !important;
+    transform: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # ======================================
 # 📅 GAME DAY BANNER
@@ -585,33 +596,34 @@ else:
     st.success("✅ Feasible production plan!")
 
 # ======================================
-# 💾 SAVE PLAN (with confirmation) — FIXED VERSION
+# 💾 SAVE PLAN (with confirmation) — CLEAN + CORRECT
 # ======================================
 
 if capacity_feasible and ingredient_feasible and batch_ok:
 
-    # Init flag
-    if "confirm_submit_plan" not in st.session_state:
-        st.session_state.confirm_submit_plan = False
+    # Check if they already submitted today
+    save_disabled = already_submitted_plan
 
-    # Save button pressed → show confirmation
-    if st.button("💾 Save Production Plan"):
-        if not plan_entries:
+    # SHOW SINGLE SAVE BUTTON
+    if st.button("💾 Save Production Plan", disabled=save_disabled):
+        if save_disabled:
+            st.warning("⚠️ You already submitted today's production plan!")
+        elif not plan_entries:
             st.warning("⚠️ Please enter your production plan before saving.")
         else:
             st.session_state.confirm_submit_plan = True
             st.rerun()
 
-    # Confirmation UI
-    if st.session_state.confirm_submit_plan:
+    # SHOW CONFIRMATION DIALOG
+    if st.session_state.get("confirm_submit_plan", False):
 
         st.warning("⚠️ Are you sure you want to save your production plan? This can only be done once per day!")
 
         col1, col2 = st.columns(2)
+
         with col1:
             if st.button("✅ Yes, save now"):
                 try:
-                    # Prevent double submission
                     existing = (
                         supabase.table("production_plans")
                         .select("id")
@@ -631,24 +643,22 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                         current_qty = float(ingredient_stock.get(ing, 0.0))
                         new_qty = max(current_qty - used_qty, 0.0)
                         supabase.table("inventory").update(
-                            {"quantity": new_qty, "updated_at": datetime.utcnow().isoformat()}
+                            {"quantity": new_qty}
                         ).eq("team_name", st.session_state.team_name
                         ).eq("category", "ingredient"
-                        ).ilike("resource_name", f"%{ing}%"
-                        ).execute()
+                        ).ilike("resource_name", f"%{ing}%").execute()
 
                     # Deduct capacities
                     for cap, used in required.items():
                         current_cap = float(capacity_totals.get(cap, 0.0))
                         new_cap = max(current_cap - used, 0.0)
                         supabase.table("inventory").update(
-                            {"quantity": new_cap, "updated_at": datetime.utcnow().isoformat()}
+                            {"quantity": new_cap}
                         ).eq("team_name", st.session_state.team_name
                         ).eq("category", "capacity"
-                        ).ilike("resource_name", f"%{cap}%"
-                        ).execute()
+                        ).ilike("resource_name", f"%{cap}%").execute()
 
-                    # Save production plan
+                    # Insert production plan
                     supabase.table("production_plans").insert({
                         "team_name": st.session_state.team_name,
                         "plan_json": json.dumps(plan_entries),
@@ -657,10 +667,11 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                         "day_number": day_number,
                     }).execute()
 
-                    # SUCCESS → Reset table + confirmation flag
+                    # Reset UI state
                     st.session_state.confirm_submit_plan = False
                     st.session_state.pop("production_table", None)
-                    st.session_state.pop("prod_table_editor", None) 
+                    st.session_state.pop("prod_table_editor", None)
+
                     st.success(f"✅ Plan saved! Expected Profit: ${profit_today:,.2f}")
 
                     st.rerun()
@@ -670,6 +681,7 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                     st.exception(e)
                     st.session_state.confirm_submit_plan = False
                     st.session_state.pop("production_table", None)
+                    st.session_state.pop("prod_table_editor", None)
                     st.rerun()
 
         with col2:
