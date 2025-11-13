@@ -261,9 +261,9 @@ capacity_totals = {
 # ======================================
 # 🧁 PLAN PRODUCTION BY CHANNEL — unified table version
 # ======================================
+
 st.subheader("🧁 Plan Your Production by Channel")
 
-# ⚠️ One-time submission reminder
 st.markdown(
     """
     <div style="
@@ -283,33 +283,39 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Build initial production plan dataframe (pivot-style)
-plan_rows = []
-for _, cake_row in cakes_df.iterrows():
-    cake_name = cake_row["name"]
-    min_units = int(cake_row["minimum_units_if_made"])
+# ---- FIX: Only build the empty table ONCE ----
+if "production_table" not in st.session_state:
 
-    display_name = f"{cake_name} (min {min_units})"
-    row = {"Cake (min qty)": display_name}
-    for ch in channels:
-        row[ch] = 0
-    plan_rows.append(row)
+    plan_rows = []
+    for _, cake_row in cakes_df.iterrows():
+        cake_name = cake_row["name"]
+        min_units = int(cake_row["minimum_units_if_made"])
 
-plan_df = pd.DataFrame(plan_rows)
+        display_name = f"{cake_name} (min {min_units})"
+        row = {"Cake (min qty)": display_name}
+        for ch in channels:
+            row[ch] = 0
+        plan_rows.append(row)
+
+    st.session_state.production_table = pd.DataFrame(plan_rows)
+
 
 st.markdown("Enter your planned production quantity for each cake and channel below:")
 
 edited_plan = st.data_editor(
-    plan_df,
+    st.session_state.production_table,
+    key="prod_table_editor",   # ← FIXED: changed widget key
     use_container_width=True,
     num_rows="fixed",
     hide_index=True,
-    key="production_table",
     column_config={
         "Cake (min qty)": st.column_config.Column(disabled=True, width="medium"),
-        **{ch: st.column_config.NumberColumn(ch, min_value=0, step=1) for ch in channels},
+        **{ch: st.column_config.NumberColumn(ch, min_value=0, step=1)
+           for ch in channels},
     },
 )
+
+
 
 # --- Convert wide table to long + enforce minimum batch constraints ---
 plan_entries = []
@@ -579,12 +585,16 @@ else:
     st.success("✅ Feasible production plan!")
 
 # ======================================
-# 💾 SAVE PLAN (with confirmation)
+# 💾 SAVE PLAN (with confirmation) — FIXED VERSION
 # ======================================
+
 if capacity_feasible and ingredient_feasible and batch_ok:
+
+    # Init flag
     if "confirm_submit_plan" not in st.session_state:
         st.session_state.confirm_submit_plan = False
 
+    # Save button pressed → show confirmation
     if st.button("💾 Save Production Plan"):
         if not plan_entries:
             st.warning("⚠️ Please enter your production plan before saving.")
@@ -592,16 +602,16 @@ if capacity_feasible and ingredient_feasible and batch_ok:
             st.session_state.confirm_submit_plan = True
             st.rerun()
 
-
+    # Confirmation UI
     if st.session_state.confirm_submit_plan:
-        st.warning(
-            "⚠️ Are you sure you want to save your production plan? This can only be done once per day!"
-        )
+
+        st.warning("⚠️ Are you sure you want to save your production plan? This can only be done once per day!")
 
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ Yes, save now"):
                 try:
+                    # Prevent double submission
                     existing = (
                         supabase.table("production_plans")
                         .select("id")
@@ -612,61 +622,48 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                     )
 
                     if existing.data:
-                        st.warning(
-                            "⚠️ You already submitted today's production plan. Try again tomorrow!"
-                        )
+                        st.warning("⚠️ You already submitted today's production plan. Try again tomorrow!")
                         st.session_state.confirm_submit_plan = False
-                        st.stop()
+                        st.rerun()
 
-                    # --- Deduct ingredients from inventory
+                    # Deduct ingredients
                     for ing, used_qty in ingredient_needs.items():
                         current_qty = float(ingredient_stock.get(ing, 0.0))
                         new_qty = max(current_qty - used_qty, 0.0)
-                        (
-                            supabase.table("inventory")
-                            .update(
-                                {
-                                    "quantity": new_qty,
-                                    "updated_at": datetime.utcnow().isoformat(),
-                                }
-                            )
-                            .eq("team_name", st.session_state.team_name)
-                            .eq("category", "ingredient")
-                            .ilike("resource_name", f"%{ing}%")
-                            .execute()
-                        )
+                        supabase.table("inventory").update(
+                            {"quantity": new_qty, "updated_at": datetime.utcnow().isoformat()}
+                        ).eq("team_name", st.session_state.team_name
+                        ).eq("category", "ingredient"
+                        ).ilike("resource_name", f"%{ing}%"
+                        ).execute()
 
-                    # --- Deduct capacity hours
+                    # Deduct capacities
                     for cap, used in required.items():
                         current_cap = float(capacity_totals.get(cap, 0.0))
-                        new_value = max(current_cap - used, 0.0)
-                        (
-                            supabase.table("inventory")
-                            .update(
-                                {
-                                    "quantity": new_value,
-                                    "updated_at": datetime.utcnow().isoformat(),
-                                }
-                            )
-                            .eq("team_name", st.session_state.team_name)
-                            .eq("category", "capacity")
-                            .ilike("resource_name", f"%{cap}%")
-                            .execute()
-                        )
+                        new_cap = max(current_cap - used, 0.0)
+                        supabase.table("inventory").update(
+                            {"quantity": new_cap, "updated_at": datetime.utcnow().isoformat()}
+                        ).eq("team_name", st.session_state.team_name
+                        ).eq("category", "capacity"
+                        ).ilike("resource_name", f"%{cap}%"
+                        ).execute()
 
-                    # --- Save production plan record
-                    payload = {
+                    # Save production plan
+                    supabase.table("production_plans").insert({
                         "team_name": st.session_state.team_name,
                         "plan_json": json.dumps(plan_entries),
                         "profit_usd": float(profit_today),
                         "required_json": json.dumps(required),
                         "day_number": day_number,
-                    }
+                    }).execute()
 
-                    supabase.table("production_plans").insert(payload).execute()
+                    # SUCCESS → Reset table + confirmation flag
+                    st.session_state.confirm_submit_plan = False
+                    st.session_state.pop("production_table", None)
 
                     st.success(f"✅ Plan saved! Expected Profit: ${profit_today:,.2f}")
-                    st.session_state.confirm_submit_plan = False
+
+                    st.rerun()
 
                 except Exception as e:
                     st.error("❌ Failed to save production plan.")
@@ -674,11 +671,12 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                     st.session_state.confirm_submit_plan = False
                     st.session_state.pop("production_table", None)
                     st.rerun()
+
         with col2:
             if st.button("❌ Cancel"):
                 st.session_state.confirm_submit_plan = False
                 st.rerun()
-                st.info("Submission cancelled.")
+
 
 # ======================================
 # 📜 HISTORY
