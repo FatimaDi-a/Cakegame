@@ -449,16 +449,18 @@ if st.button("📊 Calculate Demand"):
             )
         )
 
-        yesterday = max(1, day_number - 1)
-
-        # Get competitor prices from the previous day
-        prev_prices_data = (
-            supabase.table("prices")
-            .select("team_name, prices_json, day_number")
-            .eq("day_number", yesterday)
-            .execute()
-            .data
-        )
+        # Correctly handle first day
+        if day_number == 1:
+            prev_prices_data = []   # No competitor history on day 1
+        else:
+            yesterday = day_number - 1
+            prev_prices_data = (
+                supabase.table("prices")
+                .select("team_name, prices_json, day_number")
+                .eq("day_number", yesterday)
+                .execute()
+                .data
+            )
 
         if prev_prices_data:
             prev_rows = []
@@ -498,8 +500,10 @@ if st.button("📊 Calculate Demand"):
             gamma = params["gamma_competition"].values[0]
 
             avg_other = avg_prices.get((channel, cake), 0.0)
-
-            D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
+            if day_number == 1:
+                D = max(0, alpha - beta * my_price)
+            else:
+                D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
 
             results.append(
                 {
