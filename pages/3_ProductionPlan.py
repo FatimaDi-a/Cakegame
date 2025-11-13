@@ -596,6 +596,22 @@ else:
     st.success("✅ Feasible production plan!")
 
 # ======================================
+# 🔁 CHECK IF TODAY'S PLAN IS ALREADY SUBMITTED
+# ======================================
+
+existing_today_plan = (
+    supabase.table("production_plans")
+    .select("id")
+    .eq("team_name", st.session_state.team_name)
+    .gte("inserted_at", f"{today_str}T00:00:00")
+    .lte("inserted_at", f"{today_str}T23:59:59")
+    .execute()
+    .data
+)
+
+already_submitted_plan = bool(existing_today_plan)
+
+# ======================================
 # 💾 SAVE PLAN (with confirmation) — CLEAN + CORRECT
 # ======================================
 
