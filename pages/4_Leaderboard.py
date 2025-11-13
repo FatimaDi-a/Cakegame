@@ -68,14 +68,27 @@ TEST_MODE = True
 # =====================================
 # 🕛 AUTO FINALIZATION
 # =====================================
+#def auto_finalize_once_per_day():
+#    """Run finalize_day() once per calendar day when leaderboard is first opened."""
+#    today_str = str(date.today())
+#    if st.session_state.get("last_finalized_day") != today_str:
+#        try:
+#            msg = finalize_day()
+#            st.session_state["last_finalized_day"] = today_str
+#        except Exception as e:
+#            st.error("❌ Auto-finalization failed.")
+#            st.exception(e)
+
+#if not TEST_MODE:
+#    auto_finalize_once_per_day()
+    
 def auto_finalize_once_per_day():
     """Run finalize_day() once per calendar day when leaderboard is first opened."""
     today_str = str(date.today())
-    if st.session_state.get("last_finalized_day") != today_str:
-        try:
-            msg = finalize_day()
-            st.session_state["last_finalized_day"] = today_str
-        except Exception as e:
+    try:
+        msg = finalize_day()
+        st.session_state["last_finalized_day"] = today_str
+    except Exception as e:
             st.error("❌ Auto-finalization failed.")
             st.exception(e)
 
