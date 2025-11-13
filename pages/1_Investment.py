@@ -96,7 +96,7 @@ st.markdown(
     """
     <style>
     html, body, [class*="css"] {
-        font-size: 12px !important;
+        font-size: 10px !important;
     }
     .stApp { background-color: #FFF9F3; }
 
@@ -331,6 +331,14 @@ except FileNotFoundError:
     st.error("❌ Missing required CSV files (ingredients.csv or wages_energy.csv).")
     st.stop()
 
+valid_params = [
+    "prep_wage_usd_per_hour",
+    "oven_wage_usd_per_hour",
+    "package_wage_usd_per_hour",
+    "oven_rental_wage_usd_per_hour"
+]
+filtered_wages = wages[wages["parameter"].isin(valid_params)]
+
 # ============================
 # 💵 CASH AND STOCK VALUE
 # ============================
@@ -342,8 +350,19 @@ inventory_data = (
     .execute()
 )
 
+
 # Build a dictionary of ingredient → quantity
 current_stock = {i["resource_name"]: i["quantity"] for i in inventory_data.data} if inventory_data.data else {}
+
+capacity_data = (
+    supabase.table("inventory")
+    .select("resource_name, quantity")
+    .eq("team_name", st.session_state.team_name)
+    .eq("category", "capacity")
+    .execute()
+)
+
+capacity_stock = {i["resource_name"]: i["quantity"] for i in capacity_data.data} if capacity_data.data else {}
 
 # Copy the ingredients CSV data
 ingredients_df = ingredients.copy()
@@ -360,7 +379,28 @@ ingredients_df["Current stock"] = ingredients_df["Current stock (num)"].map(lamb
 
 # ✅ Financial calculations use the numeric version
 cash_value = st.session_state.money
-stock_value = sum(ingredients_df["unit_cost_usd"] * ingredients_df["Current stock (num)"])
+# Ingredient stock value
+ingredient_value = sum(ingredients_df["unit_cost_usd"] * ingredients_df["Current stock (num)"])
+
+# Build a lookup for capacity unit cost from wages table
+capacity_cost_lookup = {
+    row["parameter"]
+        .replace("_wage_usd_per_hour", "")
+        .replace("_usd_per_hour", "")
+        .replace("_wage", "")
+        .replace("_", " ")
+        .title(): float(row["value"])
+    for _, row in filtered_wages.iterrows()
+}
+
+# Capacity stock value
+capacity_value = sum(
+    capacity_cost_lookup.get(cap_name, 0) * qty
+    for cap_name, qty in capacity_stock.items()
+)
+
+# Total stock value (ingredients + capacity)
+stock_value = ingredient_value + capacity_value
 
 st.markdown(
     f"""
@@ -440,13 +480,6 @@ st.subheader("🏭 Production Capacity")
 capacity_entries = []
 total_capacity_cost = 0.0
 
-valid_params = [
-    "prep_wage_usd_per_hour",
-    "oven_wage_usd_per_hour",
-    "package_wage_usd_per_hour",
-    "oven_rental_wage_usd_per_hour"
-]
-filtered_wages = wages[wages["parameter"].isin(valid_params)]
 
 header_cols = st.columns([3, 2, 2])
 header_cols[0].markdown("**Capacity Type**")
@@ -665,24 +698,39 @@ try:
                 if all_ingredients:
                     ing_df = pd.DataFrame(all_ingredients)
                     ing_df = ing_df[(ing_df["buy_qty"] > 0) & (ing_df["subtotal_usd"] > 0)]
-        
+                
                     if not ing_df.empty:
                         st.markdown("**🧺 Ingredients Purchased:**")
-        
+                
                         # Ingredient (unit) column, e.g. "Cocoa Powder (kg)"
                         ing_df["Ingredient (unit)"] = ing_df.apply(
                             lambda x: f"{x['ingredient']} ({x['unit']})",
                             axis=1,
                         )
-        
-                        # Group by that combined label
-                        ing_display = (
-                            ing_df
-                            .groupby("Ingredient (unit)", as_index=False)[["buy_qty", "subtotal_usd"]]
-                            .sum()
+                
+                        # Build ordered ingredient labels based on ingredients.csv
+                        ingredient_order = [
+                            f"{row['ingredient']} ({row['unit']})"
+                            for _, row in ingredients.iterrows()
+                        ]
+                
+                        # Group and sum
+                        ing_grouped = (
+                            ing_df.groupby("Ingredient (unit)", as_index=False)[["buy_qty", "subtotal_usd"]]
+                                 .sum()
                         )
+                
+                        # Reorder according to CSV order
+                        ing_display = (
+                            ing_grouped.set_index("Ingredient (unit)")
+                                       .reindex(ingredient_order)
+                                       .dropna(how="all")
+                                       .reset_index()
+                        )
+                
+                        # Round subtotal before renaming
                         ing_display["subtotal_usd"] = ing_display["subtotal_usd"].round(2)
-        
+                
                         # Rename columns for pretty header
                         ing_display = ing_display.rename(
                             columns={
@@ -691,12 +739,13 @@ try:
                                 "subtotal_usd": "Subtotal (USD)",
                             }
                         )
-        
-                        # 🔥 Use data_editor in read-only mode with centered columns
+                
                         # Format numeric columns as strings for centering
                         ing_display["Quantity"] = ing_display["Quantity"].map(lambda x: f"{x:g}")
-                        ing_display["Subtotal (USD)"] = ing_display["Subtotal (USD)"].map(lambda x: f"${x:,.2f}")
-                        
+                        ing_display["Subtotal (USD)"] = ing_display["Subtotal (USD)"].map(
+                            lambda x: f"${x:,.2f}"
+                        )
+                
                         st.data_editor(
                             ing_display,
                             use_container_width=True,
@@ -710,6 +759,7 @@ try:
                             },
                         )
 
+
         
                 # ============================
                 # 🏭 CAPACITY PURCHASED (centered + hours)
@@ -717,10 +767,10 @@ try:
                 if all_capacity:
                     cap_df = pd.DataFrame(all_capacity)
                     cap_df = cap_df[(cap_df["hours"] > 0) & (cap_df["subtotal_usd"] > 0)]
-        
+                
                     if not cap_df.empty:
                         st.markdown("**🏭 Capacity Purchased:**")
-        
+                
                         # Human label + unit, e.g. "Oven (hours)"
                         cap_df["Capacity (unit)"] = cap_df["parameter"].apply(
                             lambda x: x.replace("_usd_per_hour", "")
@@ -728,14 +778,35 @@ try:
                                       .replace("_", " ")
                                       .title() + " (hours)"
                         )
-        
-                        cap_display = (
-                            cap_df
-                            .groupby("Capacity (unit)", as_index=False)[["hours", "subtotal_usd"]]
-                            .sum()
+                
+                        # Build ordered capacity labels based on wages_energy.csv
+                        capacity_order = [
+                            row["parameter"]
+                                .replace("_usd_per_hour", "")
+                                .replace("_wage", "")
+                                .replace("_", " ")
+                                .title() + " (hours)"
+                            for _, row in filtered_wages.iterrows()
+                        ]
+                
+                        # Group and sum
+                        cap_grouped = (
+                            cap_df.groupby("Capacity (unit)", as_index=False)[["hours", "subtotal_usd"]]
+                                 .sum()
                         )
+                
+                        # Reorder according to CSV order
+                        cap_display = (
+                            cap_grouped.set_index("Capacity (unit)")
+                                       .reindex(capacity_order)
+                                       .dropna(how="all")
+                                       .reset_index()
+                        )
+                
+                        # Round subtotal before renaming
                         cap_display["subtotal_usd"] = cap_display["subtotal_usd"].round(2)
-        
+                
+                        # Rename columns for pretty header
                         cap_display = cap_display.rename(
                             columns={
                                 "Capacity (unit)": "Capacity",
@@ -743,11 +814,13 @@ try:
                                 "subtotal_usd": "Subtotal (USD)",
                             }
                         )
-        
+                
                         # Format numeric columns as strings for centering
                         cap_display["Hours Purchased"] = cap_display["Hours Purchased"].map(lambda x: f"{x:g}")
-                        cap_display["Subtotal (USD)"] = cap_display["Subtotal (USD)"].map(lambda x: f"${x:,.2f}")
-                        
+                        cap_display["Subtotal (USD)"] = cap_display["Subtotal (USD)"].map(
+                            lambda x: f"${x:,.2f}"
+                        )
+                
                         st.data_editor(
                             cap_display,
                             use_container_width=True,
@@ -763,12 +836,11 @@ try:
 
 
 
+
 except Exception as e:
     st.error("❌ Failed to load investment history.")
     st.exception(e)
 
-# ============================
-# 🔁 REVOKE TODAY'S INVESTMENT (only if production not submitted)
 # ============================
 # 🔁 REVOKE TODAY'S INVESTMENT (only if production not submitted)
 st.markdown("---")
@@ -839,13 +911,22 @@ try:
                                 .eq("category", "ingredient")
                                 .execute()
                             )
+                    
                             if inv_data.data:
-                                current_qty = inv_data.data[0]["quantity"]
-                                new_qty = max(0, current_qty - qty)
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", inv_data.data[0]["id"]).execute()
+                                row = inv_data.data[0]
+                                # 👇 make sure we work with floats, not Decimal/str
+                                current_qty = float(row.get("quantity") or 0)
+                                new_qty = current_qty - qty
+                    
+                                if new_qty <= 0:
+                                    # 🔥 actually remove the row from inventory
+                                    supabase.table("inventory").delete().eq("id", row["id"]).execute()
+                                else:
+                                    supabase.table("inventory").update(
+                                        {"quantity": new_qty}
+                                    ).eq("id", row["id"]).execute()
 
+                  
                     for cap in json.loads(inv["capacity_json"]):
                         name = (
                             cap["parameter"]
@@ -865,12 +946,18 @@ try:
                                 .eq("category", "capacity")
                                 .execute()
                             )
+                    
                             if inv_data.data:
-                                current_qty = inv_data.data[0]["quantity"]
-                                new_qty = max(0, current_qty - qty)
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", inv_data.data[0]["id"]).execute()
+                                row = inv_data.data[0]
+                                current_qty = float(row.get("quantity") or 0)
+                                new_qty = current_qty - qty
+                    
+                                if new_qty <= 0:
+                                    supabase.table("inventory").delete().eq("id", row["id"]).execute()
+                                else:
+                                    supabase.table("inventory").update(
+                                        {"quantity": new_qty}
+                                    ).eq("id", row["id"]).execute()
 
                 # Delete today's investment records
                 for inv in inv_check.data:

@@ -83,7 +83,7 @@ st.markdown(
     """
     <style>
     html, body, [class*="css"] {
-        font-size: 12px !important;
+        font-size: 10px !important;
     }
     .stApp { background-color: #FFF9F3; }
     h1, h2, h3, h4, h5, h6 {
@@ -270,9 +270,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-disabled_inputs = finalized_today
+# Table must ALWAYS be editable.
+# Only the submit button is locked after finalization.
+table_inputs_disabled = False
+submit_disabled = finalized_today
 
-# --- Load competitor prices (previous day)
+# ============================
+# 📉 Load competitor price history
+# ============================
 try:
     prev_prices_data = (
         supabase.table("prices")
@@ -292,7 +297,8 @@ try:
                     {"channel": p["channel"], "cake": p["cake"], "price_usd": p["price_usd"]}
                 )
         prev_prices_df = pd.DataFrame(prev_rows)
-        avg_prices = prev_prices_df.groupby(["channel", "cake"])["price_usd"].mean().to_dict()
+        avg_prices = prev_prices_df.groupby(["channel","cake"])["price_usd"].mean().to_dict()
+
         prev_day_used = prev_prices_data[0]["day_number"]
         st.info(f"ℹ️ Using competitor prices from Day {prev_day_used} as baseline.")
     else:
@@ -302,63 +308,136 @@ except Exception:
     avg_prices = {}
     st.warning("⚠️ Could not load competitor prices.")
 
-# --- Build pricing table
-rows = []
-for _, ch in channels_df.iterrows():
-    for _, cake in cakes_df.iterrows():
-        avg_price = avg_prices.get((ch["channel"], cake["name"]), 0.0)
-        rows.append(
-            {
-                "Channel": ch["channel"],
-                "Cake": cake["name"],
-                "Previous day avg ($)": round(avg_price, 2),
-                "Enter your price ($)": 0.0,
-            }
-        )
+# ============================
+# 📥 Load today's existing prices to prefill the table
+# ============================
 
-pricing_df = pd.DataFrame(rows)
+today_prices_rec = (
+    supabase.table("prices")
+    .select("prices_json")
+    .eq("team_name", st.session_state.team_name)
+    .eq("day_number", day_number)
+    .limit(1)
+    .execute()
+    .data
+)
+
+prefill_map = {}  # (channel, cake) → price_usd
+
+if today_prices_rec:
+    try:
+        loaded_prices = json.loads(today_prices_rec[0]["prices_json"])
+        for p in loaded_prices:
+            key = (p["channel"], p["cake"])
+            prefill_map[key] = float(p["price_usd"])
+    except Exception:
+        pass  # If corrupted or empty, just start clean
+
+# ============================
+# 📊 Build Pivot-Style Pricing Table
+# ============================
+
+pricing_rows = []
+
+for _, cake_row in cakes_df.iterrows():
+    cake = cake_row["name"]
+
+    row = {
+        "Cake": cake,
+    }
+
+    # Add per-channel previous avg & editable price columns
+    for _, ch_row in channels_df.iterrows():
+        channel = ch_row["channel"]
+        prev_avg = avg_prices.get((channel, cake), 0.0)
+
+        # Previous day price (read-only)
+        row[f"{channel} (prev)"] = round(prev_avg, 2)
+
+        # Editable price input
+        # Prefill if exists, otherwise 0
+        row[channel] = prefill_map.get((channel, cake), 0.0)
+
+
+    pricing_rows.append(row)
+
+pricing_df = pd.DataFrame(pricing_rows)
+
+# ============================
+# 📝 Column Configuration
+# ============================
+
+col_cfg = {
+    "Cake": st.column_config.Column(disabled=True, width="medium")
+}
+
+for _, ch_row in channels_df.iterrows():
+    channel = ch_row["channel"]
+
+    col_cfg[f"{channel} (prev)"] = st.column_config.NumberColumn(
+        label=f"{channel} Avg (Prev Day)",
+        format="%.2f",
+        disabled=True,
+    )
+
+    col_cfg[channel] = st.column_config.NumberColumn(
+        label=f"{channel} Your Price ($)",
+        min_value=0.0,
+        step=0.1,
+    )
+
+# ============================
+# 📝 Show Table to User
+# ============================
+
+st.markdown("Enter your selling prices for each cake and channel below:")
 
 edited_prices = st.data_editor(
     pricing_df,
     use_container_width=True,
-    num_rows="fixed",
     hide_index=True,
-    disabled=disabled_inputs,
+    num_rows="fixed",
     key="price_table",
-    column_config={
-        "Channel": st.column_config.Column(disabled=True),
-        "Cake": st.column_config.Column(disabled=True),
-        "Previous day avg ($)": st.column_config.Column(disabled=True),
-        "Enter your price ($)": st.column_config.NumberColumn(
-            "Enter your price ($)", min_value=0.0, step=0.1
-        ),
-    },
+    disabled=table_inputs_disabled,
+    column_config=col_cfg,
 )
 
+# ============================
+# 📤 Convert wide format → long format for database
+# ============================
+
 pricing_entries = []
+
 for _, row in edited_prices.iterrows():
-    if row["Enter your price ($)"] > 0:
-        pricing_entries.append(
-            {
-                "team_name": st.session_state.team_name,
-                "channel": row["Channel"],
-                "cake": row["Cake"],
-                "price_usd": row["Enter your price ($)"],
-                "transport_cost_usd": float(
-                    channels_df.loc[
-                        channels_df["channel"] == row["Channel"],
-                        "transport_cost_per_unit_usd",
-                    ].iloc[0]
-                ),
-            }
-        )
+    cake = row["Cake"]
+
+    for _, ch_row in channels_df.iterrows():
+        channel = ch_row["channel"]
+        price = row[channel]
+
+        if price > 0:
+            pricing_entries.append(
+                {
+                    "team_name": st.session_state.team_name,
+                    "channel": channel,
+                    "cake": cake,
+                    "price_usd": price,
+                    "transport_cost_usd": float(
+                        channels_df.loc[
+                            channels_df["channel"] == channel,
+                            "transport_cost_per_unit_usd",
+                        ].iloc[0]
+                    ),
+                }
+            )
+
 # =====================================
 # 📊 CALCULATE DEMAND (TEST)
 # =====================================
 
 st.subheader("📈 Test Market Demand")
 
-if st.button("📊 Calculate Demand", disabled=disabled_inputs):
+if st.button("📊 Calculate Demand"):
     try:
         # Load instructor parameters
         demand_params = pd.read_csv(
@@ -394,7 +473,8 @@ if st.button("📊 Calculate Demand", disabled=disabled_inputs):
                         }
                     )
             prev_prices_df = pd.DataFrame(prev_rows)
-            avg_prices = prev_prices_df.groupby("channel")["price_usd"].mean().to_dict()
+            avg_prices = prev_prices_df.groupby(["channel","cake"])["price_usd"].mean().to_dict()
+
         else:
             avg_prices = {}
             st.info("ℹ️ No previous-day prices found — using 0 as competitor baseline.")
@@ -417,7 +497,8 @@ if st.button("📊 Calculate Demand", disabled=disabled_inputs):
             beta = params["beta"].values[0]
             gamma = params["gamma_competition"].values[0]
 
-            avg_other = avg_prices.get(channel, 0.0)
+            avg_other = avg_prices.get((channel, cake), 0.0)
+
             D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
 
             results.append(
@@ -447,7 +528,7 @@ if st.button("📊 Calculate Demand", disabled=disabled_inputs):
 if "confirm_submit" not in st.session_state:
     st.session_state.confirm_submit = False
 
-if st.button("💾 Submit Final Prices", disabled=disabled_inputs):
+if st.button("💾 Submit Final Prices", disabled=submit_disabled):
     if not pricing_entries:
         st.warning("⚠️ Please enter prices before saving.")
         st.stop()
@@ -457,20 +538,46 @@ if st.button("💾 Submit Final Prices", disabled=disabled_inputs):
 if st.session_state.confirm_submit:
     st.warning("⚠️ Are you sure you want to submit? This can only be done once!")
     col1, col2 = st.columns(2)
+
     with col1:
         if st.button("✅ Yes, submit now"):
             try:
+                # Build payload
                 payload = {
                     "team_name": st.session_state.team_name,
-                    "prices_json": json.dumps(pricing_entries),  # ✅ today's entries
+                    "prices_json": json.dumps(pricing_entries),
                     "day_number": day_number,
                     "finalized": True,
                     "auto_filled": False,
                 }
-                supabase.table("prices").insert(payload).execute()
+
+                # Check if row already exists for today
+                existing_today = (
+                    supabase.table("prices")
+                    .select("id")
+                    .eq("team_name", st.session_state.team_name)
+                    .eq("day_number", day_number)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
+
+                if existing_today:
+                    # ✅ Update instead of inserting duplicate
+                    supabase.table("prices") \
+                        .update(payload) \
+                        .eq("id", existing_today[0]["id"]) \
+                        .execute()
+                else:
+                    # ⬇️ Insert only if no row exists
+                    supabase.table("prices") \
+                        .insert(payload) \
+                        .execute()
+
                 st.success("✅ Final prices saved! You can’t edit them again today.")
                 st.session_state.confirm_submit = False
                 st.rerun()
+
             except Exception as e:
                 st.error("❌ Failed to save final prices.")
                 st.exception(e)
@@ -479,6 +586,7 @@ if st.session_state.confirm_submit:
         if st.button("❌ Cancel"):
             st.session_state.confirm_submit = False
             st.info("Submission cancelled.")
+
 
 # =====================================
 # 📜 HISTORY

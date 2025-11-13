@@ -77,7 +77,7 @@ st.markdown(
     <style>
     /* ===== Global text size ===== */
     html, body, [class*="css"] {
-        font-size: 16px !important;
+        font-size: 12px !important;
     }
 
     /* ===== Background overlay ===== */

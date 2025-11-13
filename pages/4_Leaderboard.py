@@ -88,7 +88,7 @@ st.markdown(
     """
     <style>
     html, body, [class*="css"] {
-        font-size: 12px !important;
+        font-size: 10px !important;
     }
     .stApp {
         background-color: #FFF9F3;

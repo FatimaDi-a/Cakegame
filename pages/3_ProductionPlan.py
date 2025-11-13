@@ -73,7 +73,7 @@ st.markdown(
     <style>
     /* ===== Global text size ===== */
     html, body, [class*="css"] {
-        font-size: 16px !important; /* default is 16px */
+        font-size: 10px !important; /* default is 16px */
     }
     /* ===== Background ===== */
     .stApp {
@@ -343,17 +343,24 @@ for _, row in edited_plan.iterrows():
             })
 
 
-
 # --- Show warnings for batch violations ---
 # --- Show warnings for batch violations ---
+# --- Minimum batch warnings ---
 if violations:
     for cake, min_req in violations:
         st.warning(f"⚠️ {cake}: total across all channels must be at least {min_req} units if produced.")
+
+# --- Block submission if minimum batch is violated ---
+batch_ok = (len(violations) == 0)
+
+if not batch_ok:
+    st.error("❌ You cannot submit. Some cakes do not meet the minimum batch quantity.")
 
 if not plan_entries:
     st.info("No production quantities entered yet.")
 else:
     st.success("✅ Production quantities recorded. Continue with feasibility checks below.")
+
 
 # ✅ Normalize column names so downstream code still works
 plan_df = pd.DataFrame(plan_entries)
@@ -521,7 +528,7 @@ else:
 # ======================================
 # 💾 SAVE PLAN (with confirmation, same style as demand page)
 # ======================================
-if capacity_feasible and ingredient_feasible:
+if capacity_feasible and ingredient_feasible and batch_ok:
 
     if "confirm_submit_plan" not in st.session_state:
         st.session_state.confirm_submit_plan = False
