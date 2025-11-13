@@ -203,6 +203,31 @@ except Exception as e:
     st.error("❌ Failed to load leaderboard data.")
     st.exception(e)
 
+
+
+# =====================================
+# 🧪 MANUAL FINALIZATION (TEST ONLY)
+# =====================================
+
+st.markdown("---")
+st.subheader("🧪 Manual Finalization (Testing Only)")
+
+
+if st.button("🔧 Run Finalize Day Now"):
+    try:
+        msg = finalize_day()
+        st.success("✅ Manual finalization completed successfully!")
+        st.write(msg)
+
+        # Update session state so auto-finalize won't run again today
+        st.session_state["last_finalized_day"] = str(date.today())
+
+        st.rerun()
+
+    except Exception as e:
+        st.error("❌ Manual finalization failed.")
+        st.exception(e)
+
 # =====================================
 # 🚪 LOGOUT
 # =====================================
