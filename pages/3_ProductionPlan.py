@@ -660,7 +660,7 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                     # SUCCESS → Reset table + confirmation flag
                     st.session_state.confirm_submit_plan = False
                     st.session_state.pop("production_table", None)
-
+                    st.session_state.pop("prod_table_editor", None) 
                     st.success(f"✅ Plan saved! Expected Profit: ${profit_today:,.2f}")
 
                     st.rerun()
