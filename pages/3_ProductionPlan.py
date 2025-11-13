@@ -27,14 +27,12 @@ today = date.today()
 day_number = max(1, (today - start_date).days + 1)
 st.session_state.day = day_number
 
-
 # ======================================
 # 🔒 LOGIN CHECK
 # ======================================
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
     st.stop()
-from datetime import date
 
 # ❌ Specific real-world calendar dates when the game is closed
 CLOSED_DATES = [
@@ -43,10 +41,9 @@ CLOSED_DATES = [
     "2025-11-26"
 ]
 
-today = date.today().isoformat()
-
-if today in CLOSED_DATES:
-    st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
+today_str = today.isoformat()
+if today_str in CLOSED_DATES:
+    st.warning(f"🚫 The game is closed today ({today_str}). Please come back tomorrow!")
     st.stop()
 
 # ======================================
@@ -69,7 +66,6 @@ st.set_page_config(page_title="Production Plan", page_icon="🍰", layout="wide"
 
 st.markdown(
     """
-
     <style>
     /* ===== Global text size ===== */
     html, body, [class*="css"] {
@@ -89,11 +85,10 @@ st.markdown(
 
     /* ===== Subheaders ===== */
     .stSubheader, .stMarkdown p {
-    color: #3B2C1A !important;
-    font-size: 1.8rem; 
-    line-height: 1.6;
-}
-
+        color: #3B2C1A !important;
+        font-size: 1.8rem; 
+        line-height: 1.6;
+    }
 
     /* ===== Divider lines ===== */
     hr {
@@ -190,13 +185,16 @@ st.markdown(
 # ======================================
 # 📅 GAME DAY BANNER
 # ======================================
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="background: linear-gradient(90deg, #F5D2A4, #E0B070);
 padding: 0.6rem 1rem; border-radius: 10px; text-align: center;
 color: #4B2E05; font-weight: 700; font-size: 1.2rem; margin-bottom: 1.2rem;">
 📅 <span style="font-size:1.3rem;">Week {day_number}</span>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True
+)
 
 # ======================================
 # 🧁 PAGE HEADER
@@ -217,10 +215,10 @@ except Exception as e:
 
 channels = channels_df["channel"].tolist()
 
-# Convert minute columns to hours
-for col in ["oven_min_per_batch", "oven_load_unload_min_per_batch",
-            "prep_setup_min_per_batch", "prep_min_per_unit",
-            "decor_min_per_unit", "pack_min_per_unit"]:
+# ======================================
+# ⏱️ CONVERT MINUTES → HOURS
+# ======================================
+for col in ["oven_min_per_batch", "prep_min_per_unit", "pack_min_per_unit"]:
     if col in cakes_df.columns:
         cakes_df[col] = cakes_df[col] / 60.0
 
@@ -244,23 +242,24 @@ if recipes_df.empty:
 # 📦 LOAD INVENTORY
 # ======================================
 def get_inventory(team_name, category):
-    data = supabase.table("inventory") \
-        .select("resource_name, quantity") \
-        .eq("team_name", team_name) \
-        .eq("category", category) \
-        .execute().data
+    data = (
+        supabase.table("inventory")
+        .select("resource_name, quantity")
+        .eq("team_name", team_name)
+        .eq("category", category)
+        .execute()
+        .data
+    )
     return {d["resource_name"].lower(): d["quantity"] for d in data}
 
 ingredient_stock = get_inventory(st.session_state.team_name, "ingredient")
-capacity_totals = {k.lower(): v for k, v in get_inventory(st.session_state.team_name, "capacity").items()}
+capacity_totals = {
+    k.lower(): v for k, v in get_inventory(st.session_state.team_name, "capacity").items()
+}
 
-# ======================================
-# 🧁 PLAN PRODUCTION BY CHANNEL
-# ======================================
 # ======================================
 # 🧁 PLAN PRODUCTION BY CHANNEL — unified table version
 # ======================================
-
 st.subheader("🧁 Plan Your Production by Channel")
 
 # ⚠️ One-time submission reminder
@@ -283,16 +282,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Build initial production plan dataframe
-# --- Build pivot-style production table ---
+# Build initial production plan dataframe (pivot-style)
 plan_rows = []
 for _, cake_row in cakes_df.iterrows():
     cake_name = cake_row["name"]
-    min_units = int(cake_row["min_units_if_made"])
-    
-    # 👇 Show "min" next to the cake name
+    min_units = int(cake_row["minimum_units_if_made"])
+
     display_name = f"{cake_name} (min {min_units})"
-    
     row = {"Cake (min qty)": display_name}
     for ch in channels:
         row[ch] = 0
@@ -302,7 +298,6 @@ plan_df = pd.DataFrame(plan_rows)
 
 st.markdown("Enter your planned production quantity for each cake and channel below:")
 
-# Editable wide-format table
 edited_plan = st.data_editor(
     plan_df,
     use_container_width=True,
@@ -315,17 +310,13 @@ edited_plan = st.data_editor(
     },
 )
 
-
-
-# --- Enforce minimum batch constraint (across all channels) ---
-# --- Convert wide table back into long format for backend logic ---
+# --- Convert wide table to long + enforce minimum batch constraints ---
 plan_entries = []
 violations = []
-min_batch_map = {r["name"]: int(r["min_units_if_made"]) for _, r in cakes_df.iterrows()}
+min_batch_map = {r["name"]: int(r["minimum_units_if_made"]) for _, r in cakes_df.iterrows()}
 
 totals = {}
 for _, row in edited_plan.iterrows():
-    # Extract the real cake name (before "(min ...)")
     cake = row["Cake (min qty)"].split(" (min")[0].strip()
     min_required = min_batch_map[cake]
     total_qty = sum(row[ch] for ch in channels)
@@ -336,22 +327,16 @@ for _, row in edited_plan.iterrows():
 
     for ch in channels:
         if row[ch] > 0:
-            plan_entries.append({
-                "cake": cake,
-                "channel": ch,
-                "qty": row[ch]
-            })
+            plan_entries.append({"cake": cake, "channel": ch, "qty": row[ch]})
 
-
-# --- Show warnings for batch violations ---
-# --- Show warnings for batch violations ---
-# --- Minimum batch warnings ---
+# Min batch warnings
 if violations:
     for cake, min_req in violations:
-        st.warning(f"⚠️ {cake}: total across all channels must be at least {min_req} units if produced.")
+        st.warning(
+            f"⚠️ {cake}: total across all channels must be at least {min_req} units if produced."
+        )
 
-# --- Block submission if minimum batch is violated ---
-batch_ok = (len(violations) == 0)
+batch_ok = len(violations) == 0
 
 if not batch_ok:
     st.error("❌ You cannot submit. Some cakes do not meet the minimum batch quantity.")
@@ -361,60 +346,93 @@ if not plan_entries:
 else:
     st.success("✅ Production quantities recorded. Continue with feasibility checks below.")
 
-
-# ✅ Normalize column names so downstream code still works
+# Normalize plan_df to long format
 plan_df = pd.DataFrame(plan_entries)
 plan_df.columns = [str(c).lower() for c in plan_df.columns]
-
-
 
 # ======================================
 # ⚙️ LOAD DEMANDS & PRICES
 # ======================================
 def get_latest_json(table_name, team_name):
-    resp = supabase.table(table_name).select("*") \
-        .eq("team_name", team_name).order("id", desc=True).limit(1).execute()
+    resp = (
+        supabase.table(table_name)
+        .select("*")
+        .eq("team_name", team_name)
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+    )
     if resp.data:
         return pd.DataFrame(json.loads(resp.data[0].get(f"{table_name}_json", "[]")))
     return pd.DataFrame()
 
 price_df = get_latest_json("prices", st.session_state.team_name)
 demand_df = get_latest_json("demands", st.session_state.team_name)
+
 if not price_df.empty:
     price_df.columns = price_df.columns.str.lower()
 if not demand_df.empty:
     demand_df.columns = demand_df.columns.str.lower()
 
+# Fallbacks if no prices/demands yet
 if price_df.empty:
-    price_df = pd.DataFrame({"cake": cakes_df["name"].repeat(len(channels)),
-                             "channel": channels * len(cakes_df),
-                             "price": [5.0] * len(cakes_df) * len(channels)})
+    price_df = pd.DataFrame(
+        {
+            "cake": cakes_df["name"].repeat(len(channels)).tolist(),
+            "channel": channels * len(cakes_df),
+            "price": [5.0] * len(cakes_df) * len(channels),
+        }
+    )
 
 if demand_df.empty:
-    demand_df = pd.DataFrame({"cake": cakes_df["name"].repeat(len(channels)),
-                              "channel": channels * len(cakes_df),
-                              "demand": [10] * len(cakes_df) * len(channels)})
+    demand_df = pd.DataFrame(
+        {
+            "cake": cakes_df["name"].repeat(len(channels)).tolist(),
+            "channel": channels * len(cakes_df),
+            "demand": [10] * len(cakes_df) * len(channels),
+        }
+    )
 
 # ======================================
 # 🧠 FEASIBILITY CHECKS
 # ======================================
 # Total units per cake across channels
-cake_totals = plan_df.groupby("cake")["qty"].sum().reset_index() if not plan_df.empty else pd.DataFrame(columns=["cake", "qty"])
+if not plan_df.empty:
+    cake_totals = plan_df.groupby("cake")["qty"].sum().reset_index()
+else:
+    cake_totals = pd.DataFrame(columns=["cake", "qty"])
 
-# Capacity requirements
-required = {"prep": 0, "oven": 0, "package": 0, "oven rental": 0}
+# --- Capacity requirements (in hours) ---
+required = {"prep": 0.0, "oven": 0.0, "package": 0.0, "oven rental": 0.0}
+
 for _, r in cakes_df.iterrows():
     cake_name = r["name"]
-    qty = float(cake_totals.loc[cake_totals["cake"] == cake_name, "qty"].values[0]) if cake_name in cake_totals["cake"].values else 0
-    required["prep"] += qty * (r["prep_min_per_unit"] + r["decor_min_per_unit"] + r["prep_setup_min_per_batch"]/r["batch_size_units"])
-    required["oven"] += (qty / r["batch_size_units"]) * (r["oven_min_per_batch"] + r["oven_load_unload_min_per_batch"])
-    # Oven rental hours = same as oven time required
-    required["oven rental"] += required["oven"]
-    required["package"] += qty * r["pack_min_per_unit"]
 
-capacity_feasible = all(required[k] <= capacity_totals.get(k, 0) + 1e-9 for k in required)
+    if cake_name in cake_totals["cake"].values:
+        qty = float(
+            cake_totals.loc[cake_totals["cake"] == cake_name, "qty"].values[0]
+        )
+    else:
+        qty = 0.0
 
-# Ingredient requirements
+    # PREP
+    required["prep"] += qty * float(r["prep_min_per_unit"])
+
+    # OVEN (batch logic)
+    batches = qty / float(r["batch_size_units"]) if r["batch_size_units"] > 0 else 0.0
+    required["oven"] += batches * float(r["oven_min_per_batch"])
+
+    # OVEN RENTAL = oven time
+    required["oven rental"] = required["oven"]
+
+    # PACKAGING
+    required["package"] += qty * float(r["pack_min_per_unit"])
+
+capacity_feasible = all(
+    required[k] <= capacity_totals.get(k, 0.0) + 1e-9 for k in required
+)
+
+# --- Ingredient requirements ---
 def compute_required_ingredients(plan_df, recipes_df):
     needs = {}
     totals = plan_df.groupby("cake")["qty"].sum().to_dict()
@@ -422,9 +440,13 @@ def compute_required_ingredients(plan_df, recipes_df):
         recipe = recipes_df[recipes_df["name"].str.lower() == cake.lower()]
         if recipe.empty:
             continue
-        for ing in [c for c in recipe.columns if c not in ["id", "cake_id", "name", "created_at"]]:
+        for ing in [
+            c
+            for c in recipe.columns
+            if c not in ["id", "cake_id", "name", "created_at"]
+        ]:
             amt = qty * float(recipe.iloc[0][ing])
-            needs[ing.lower()] = needs.get(ing.lower(), 0) + amt
+            needs[ing.lower()] = needs.get(ing.lower(), 0.0) + amt
     return needs
 
 if not plan_df.empty and "cake" in plan_df.columns:
@@ -432,158 +454,203 @@ if not plan_df.empty and "cake" in plan_df.columns:
 else:
     ingredient_needs = {}
 
-ingredient_feasible = all(ingredient_needs[i] <= ingredient_stock.get(i, 0) + 1e-9 for i in ingredient_needs)
+ingredient_feasible = all(
+    ingredient_needs[i] <= ingredient_stock.get(i, 0.0) + 1e-9
+    for i in ingredient_needs
+)
 
 # ======================================
 # 🧾 INGREDIENT TABLE
 # ======================================
 st.markdown("### 🧂 Ingredient Feasibility Check")
 if ingredient_needs:
-    ing_table = pd.DataFrame([
-        {"Ingredient": i.title(),
-         "Needed": round(ingredient_needs[i], 2),
-         "Available": round(ingredient_stock.get(i, 0), 2),
-         "OK": "✅" if ingredient_needs[i] <= ingredient_stock.get(i, 0) else "❌"}
-        for i in ingredient_needs
-    ])
+    ing_table = pd.DataFrame(
+        [
+            {
+                "Ingredient": i.title(),
+                "Needed": round(ingredient_needs[i], 2),
+                "Available": round(ingredient_stock.get(i, 0.0), 2),
+                "OK": "✅"
+                if ingredient_needs[i] <= ingredient_stock.get(i, 0.0)
+                else "❌",
+            }
+            for i in ingredient_needs
+        ]
+    )
     st.dataframe(ing_table, use_container_width=True)
 else:
     st.info("No ingredients needed yet. Enter production quantities above.")
-
 
 # ======================================
 # 💰 PROFIT CALCULATION 
 # ======================================
 if not plan_df.empty and "cake" in plan_df.columns:
-    # Ensure lowercase column names
     price_df.columns = price_df.columns.str.lower()
     demand_df.columns = demand_df.columns.str.lower()
 
-    # Normalize column names
+    # Normalize price column name
     if "net_usd" in price_df.columns:
         price_df.rename(columns={"net_usd": "price"}, inplace=True)
     elif "price_usd" in price_df.columns:
         price_df.rename(columns={"price_usd": "price"}, inplace=True)
 
-    # Validate required fields
     if "price" not in price_df.columns:
-        st.error("❌ Missing 'price_usd' or 'net_usd' column in Supabase prices table.")
+        st.error(
+            "❌ Missing 'price_usd' or 'net_usd' column in Supabase prices table."
+        )
         st.stop()
     if "demand" not in demand_df.columns:
         st.error("❌ Missing 'demand' column in Supabase demands table.")
         st.stop()
 
-    # Merge production, prices, and demand
+    # --- Safe merge with optional transport_cost_usd ---
+    merge_cols = ["cake", "channel", "price"]
+    if "transport_cost_usd" in price_df.columns:
+        merge_cols.append("transport_cost_usd")
+    else:
+        price_df["transport_cost_usd"] = 0.0
+
     merged = (
-        plan_df.merge(price_df[["cake", "channel", "price", "transport_cost_usd"]],
-                      on=["cake", "channel"], how="left")
-               .merge(demand_df[["cake", "channel", "demand"]],
-                      on=["cake", "channel"], how="left")
+        plan_df.merge(price_df[merge_cols], on=["cake", "channel"], how="left")
+        .merge(demand_df[["cake", "channel", "demand"]], on=["cake", "channel"], how="left")
     )
 
     # Clean up NaNs
-    merged["price"] = merged["price"].astype(float).fillna(0)
-    merged["transport_cost_usd"] = merged["transport_cost_usd"].astype(float).fillna(0)
-    merged["demand"] = merged["demand"].astype(float).fillna(0)
-    merged["qty"] = merged["qty"].astype(float).fillna(0)
+    merged["price"] = merged["price"].astype(float).fillna(0.0)
+    merged["transport_cost_usd"] = (
+        merged["transport_cost_usd"].astype(float).fillna(0.0)
+    )
+    merged["demand"] = merged["demand"].astype(float).fillna(0.0)
+    merged["qty"] = merged["qty"].astype(float).fillna(0.0)
 
     # Calculate sold units and revenue
     merged["sold_units"] = np.minimum(merged["qty"], merged["demand"])
     merged["revenue"] = merged["sold_units"] * merged["price"]
-    merged["transport_cost_total"] = merged["sold_units"] * merged["transport_cost_usd"]
+    merged["transport_cost_total"] = (
+        merged["sold_units"] * merged["transport_cost_usd"]
+    )
 
-
-    # 💰 Final profit (no double-counting purchases)
+    # Final profit (no double-counting purchases)
     merged["profit"] = merged["revenue"] - merged["transport_cost_total"]
-    profit_today = merged["profit"].sum() 
+    profit_today = float(merged["profit"].sum())
 
 else:
-    merged = pd.DataFrame(columns=["cake", "channel", "qty", "sold_units", "revenue", "profit"])
+    merged = pd.DataFrame(
+        columns=["cake", "channel", "qty", "sold_units", "revenue", "profit"]
+    )
     profit_today = 0.0
-
-
-
-
 
 # ======================================
 # 📊 SUMMARY
 # ======================================
 st.markdown("---")
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Prep Hours", f"{required['prep']:.2f} / {capacity_totals.get('prep',0):.2f}")
-c2.metric("Oven Hours", f"{required['oven']:.2f} / {capacity_totals.get('oven',0):.2f}")
-c3.metric("Oven Rental", f"{required['oven rental']:.2f} / {capacity_totals.get('oven rental',0):.2f}")
-c4.metric("Pack Hours", f"{required['package']:.2f} / {capacity_totals.get('package',0):.2f}")
+c1.metric(
+    "Prep Hours",
+    f"{required['prep']:.2f} / {capacity_totals.get('prep', 0.0):.2f}",
+)
+c2.metric(
+    "Oven Hours",
+    f"{required['oven']:.2f} / {capacity_totals.get('oven', 0.0):.2f}",
+)
+c3.metric(
+    "Oven Rental",
+    f"{required['oven rental']:.2f} / {capacity_totals.get('oven rental', 0.0):.2f}",
+)
+c4.metric(
+    "Pack Hours",
+    f"{required['package']:.2f} / {capacity_totals.get('package', 0.0):.2f}",
+)
 c5.metric("Profit (Revenue)", f"${profit_today:,.2f}")
 
 if not capacity_feasible:
-    overused = [k for k in required if required[k] > capacity_totals.get(k, 0)]
-    st.error(f"❌ Capacity exceeded for: {', '.join([k.title() for k in overused])}. Please adjust your plan.")
-
+    overused = [
+        k for k in required if required[k] > capacity_totals.get(k, 0.0)
+    ]
+    st.error(
+        f"❌ Capacity exceeded for: {', '.join([k.title() for k in overused])}. Please adjust your plan."
+    )
 elif not ingredient_feasible:
     st.error("❌ Not enough ingredients available!")
 else:
     st.success("✅ Feasible production plan!")
 
 # ======================================
-# 💾 SAVE PLAN (with confirmation, same style as demand page)
+# 💾 SAVE PLAN (with confirmation)
 # ======================================
 if capacity_feasible and ingredient_feasible and batch_ok:
-
     if "confirm_submit_plan" not in st.session_state:
         st.session_state.confirm_submit_plan = False
 
-    # Step 1: First click → ask for confirmation
     if st.button("💾 Save Production Plan"):
         if not plan_entries:
             st.warning("⚠️ Please enter your production plan before saving.")
-            st.stop()
+        else:
+            st.session_state.confirm_submit_plan = True
+            st.experimental_rerun()
 
-        # show confirmation step
-        st.session_state.confirm_submit_plan = True
-        st.rerun()
-
-    # Step 2: Confirmation step
     if st.session_state.confirm_submit_plan:
-        st.warning("⚠️ Are you sure you want to save your production plan? This can only be done once per day!")
+        st.warning(
+            "⚠️ Are you sure you want to save your production plan? This can only be done once per day!"
+        )
 
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ Yes, save now"):
                 try:
-                    today_str = today.isoformat()
-                    existing = supabase.table("production_plans") \
-                        .select("id").eq("team_name", st.session_state.team_name) \
-                        .gte("inserted_at", f"{today_str}T00:00:00") \
-                        .lte("inserted_at", f"{today_str}T23:59:59") \
+                    existing = (
+                        supabase.table("production_plans")
+                        .select("id")
+                        .eq("team_name", st.session_state.team_name)
+                        .gte("inserted_at", f"{today_str}T00:00:00")
+                        .lte("inserted_at", f"{today_str}T23:59:59")
                         .execute()
+                    )
 
                     if existing.data:
-                        st.warning("⚠️ You already submitted today's production plan. Try again tomorrow!")
+                        st.warning(
+                            "⚠️ You already submitted today's production plan. Try again tomorrow!"
+                        )
                         st.session_state.confirm_submit_plan = False
                         st.stop()
 
-                    # --- Deduct ingredients
+                    # --- Deduct ingredients from inventory
                     for ing, used_qty in ingredient_needs.items():
-                        new_qty = max(ingredient_stock.get(ing, 0) - used_qty, 0)
-                        supabase.table("inventory").update({
-                            "quantity": new_qty,
-                            "updated_at": datetime.utcnow().isoformat()
-                        }).eq("team_name", st.session_state.team_name) \
-                         .eq("category", "ingredient") \
-                         .ilike("resource_name", f"%{ing}%").execute()
+                        current_qty = float(ingredient_stock.get(ing, 0.0))
+                        new_qty = max(current_qty - used_qty, 0.0)
+                        (
+                            supabase.table("inventory")
+                            .update(
+                                {
+                                    "quantity": new_qty,
+                                    "updated_at": datetime.utcnow().isoformat(),
+                                }
+                            )
+                            .eq("team_name", st.session_state.team_name)
+                            .eq("category", "ingredient")
+                            .ilike("resource_name", f"%{ing}%")
+                            .execute()
+                        )
 
                     # --- Deduct capacity hours
                     for cap, used in required.items():
-                        new_value = max(capacity_totals.get(cap, 0) - used, 0)
-                        supabase.table("inventory").update({
-                            "quantity": new_value,
-                            "updated_at": datetime.utcnow().isoformat()
-                        }).eq("team_name", st.session_state.team_name) \
-                         .eq("category", "capacity") \
-                         .ilike("resource_name", f"%{cap}%").execute()
+                        current_cap = float(capacity_totals.get(cap, 0.0))
+                        new_value = max(current_cap - used, 0.0)
+                        (
+                            supabase.table("inventory")
+                            .update(
+                                {
+                                    "quantity": new_value,
+                                    "updated_at": datetime.utcnow().isoformat(),
+                                }
+                            )
+                            .eq("team_name", st.session_state.team_name)
+                            .eq("category", "capacity")
+                            .ilike("resource_name", f"%{cap}%")
+                            .execute()
+                        )
 
-                    # --- Save record
+                    # --- Save production plan record
                     payload = {
                         "team_name": st.session_state.team_name,
                         "plan_json": json.dumps(plan_entries),
@@ -607,10 +674,6 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                 st.session_state.confirm_submit_plan = False
                 st.info("Submission cancelled.")
 
-
-
-
-
 # ======================================
 # 📜 HISTORY
 # ======================================
@@ -618,13 +681,21 @@ st.markdown("---")
 st.subheader("📜 Previous Production Plans")
 
 try:
-    records = supabase.table("production_plans").select("*") \
-        .eq("team_name", st.session_state.team_name).order("id", desc=True).execute().data
+    records = (
+        supabase.table("production_plans")
+        .select("*")
+        .eq("team_name", st.session_state.team_name)
+        .order("id", desc=True)
+        .execute()
+        .data
+    )
     if records:
         for r in records:
-            with st.expander(f"Plan (Expected Profit ${r['profit_usd']:,.2f})"):
-                plan = pd.DataFrame(json.loads(r["plan_json"]))
-                st.dataframe(plan, use_container_width=True)
+            with st.expander(
+                f"Plan (Expected Profit ${float(r['profit_usd']):,.2f})"
+            ):
+                plan_hist = pd.DataFrame(json.loads(r["plan_json"]))
+                st.dataframe(plan_hist, use_container_width=True)
     else:
         st.info("No previous plans found.")
 except Exception as e:

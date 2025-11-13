@@ -476,42 +476,90 @@ st.markdown(f"**Total Ingredients Cost:** ${total_ingredients_cost:,.2f}")
 # ============================
 # 🏭 PRODUCTION CAPACITY
 # ============================
+# === Build Capacity Table ===
 st.subheader("🏭 Production Capacity")
 capacity_entries = []
-total_capacity_cost = 0.0
 
+# Build base numeric df
+capacity_df = pd.DataFrame([
+    {
+        "Capacity": row["parameter"]
+            .replace("_wage_usd_per_hour", "")
+            .replace("_usd_per_hour", "")
+            .replace("_wage", "")
+            .replace("_", " ")
+            .title(),
+        "Rate (USD/hr)": float(row["value"]),
+        "Current stock (hours)": float(
+            capacity_stock.get(
+                row["parameter"]
+                    .replace("_wage_usd_per_hour", "")
+                    .replace("_usd_per_hour", "")
+                    .replace("_wage", "")
+                    .replace("_", " ")
+                    .title(),
+                0
+            )
+        ),
+        "Buy hours": 0.0,
+        "param_key": row["parameter"],  # keep original param for saving
+    }
+    for _, row in filtered_wages.iterrows()
+])
 
-header_cols = st.columns([3, 2, 2])
-header_cols[0].markdown("**Capacity Type**")
-header_cols[1].markdown("**Rate (USD/hr)**")
-header_cols[2].markdown("**Hours to Buy**")
+# 👉 Make pretty *string* versions for display so they center
+capacity_df["Rate display"] = capacity_df["Rate (USD/hr)"].map(lambda x: f"${x:,.2f}")
+capacity_df["Current stock display"] = capacity_df["Current stock (hours)"].map(lambda x: f"{x:g}")
 
-for idx, row in filtered_wages.iterrows():
-    param = row["parameter"]
-    rate = float(row["value"])
-    label = param.replace("_wage_usd_per_hour", "").replace("_usd_per_hour", "").replace("_wage", "").replace("_", " ").title()
+# This is what the user sees
+capacity_display = capacity_df[
+    ["Capacity", "Rate display", "Current stock display", "Buy hours"]
+].rename(columns={
+    "Rate display": "Rate (USD/hr)",
+    "Current stock display": "Current stock (hours)",
+})
 
-    c1, c2, c3 = st.columns([3, 2, 2])
-    c1.write(label)
-    c2.write(f"${rate:.2f}/hr")
-    hours = c3.number_input(
-        f"Hours for {label}",
-        min_value=0.0,
-        step=0.5,
-        key=f"cap_{idx}"
-    )
-    subtotal = rate * hours
-    total_capacity_cost += subtotal
+edited_capacity = st.data_editor(
+    capacity_display,
+    use_container_width=True,
+    num_rows="fixed",
+    hide_index=True,
+    key="capacity_table",
+    column_config={
+        "Capacity": {"disabled": True, "alignment": "center"},
+        "Rate (USD/hr)": {"disabled": True, "alignment": "center"},
+        "Current stock (hours)": {"disabled": True, "alignment": "center"},
+        "Buy hours": {
+            "type": "number",
+            "min_value": 0.0,
+            "step": 0.5,
+            "alignment": "center",
+        },
+    },
+)
 
-    capacity_entries.append({
-        "parameter": param,
-        "display_name": label,
-        "unit_cost_usd": rate,
-        "hours": hours,
-        "subtotal_usd": subtotal
-    })
+# Pull back the edited numeric values for calculations
+capacity_df["Buy hours"] = edited_capacity["Buy hours"].astype(float)
+
+# Calculate totals using the numeric df
+capacity_df["Subtotal USD"] = capacity_df["Buy hours"] * capacity_df["Rate (USD/hr)"]
+total_capacity_cost = capacity_df["Subtotal USD"].sum()
 
 st.markdown(f"**Total Capacity Cost:** ${total_capacity_cost:,.2f}")
+
+# Build capacity_entries for saving
+capacity_entries = [
+    {
+        "parameter": row["param_key"],
+        "display_name": row["Capacity"],
+        "unit_cost_usd": float(row["Rate (USD/hr)"]),
+        "hours": float(row["Buy hours"]),
+        "subtotal_usd": float(row["Subtotal USD"]),
+    }
+    for _, row in capacity_df.iterrows()
+    if row["Buy hours"] > 0
+]
+
 
 # ============================
 # 📈 SUMMARY
