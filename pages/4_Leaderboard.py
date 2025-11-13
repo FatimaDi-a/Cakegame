@@ -92,8 +92,8 @@ def auto_finalize_once_per_day():
             st.error("❌ Auto-finalization failed.")
             st.exception(e)
 
-if not TEST_MODE:
-    auto_finalize_once_per_day()
+
+auto_finalize_once_per_day()
 
 
 # =====================================
