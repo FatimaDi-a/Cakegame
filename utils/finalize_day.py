@@ -24,15 +24,19 @@ def finalize_day(target_date=None):
     today = date.today()
 
     # --- Determine target day (yesterday if not specified) ---
-    target_day = (
-        datetime.strptime(target_date, "%Y-%m-%d").date()
-        if target_date else today - timedelta(days=1)
-    )
+    #target_day = (
+    #    datetime.strptime(target_date, "%Y-%m-%d").date()
+    #    if target_date else today - timedelta(days=1)
+    #)
+    target_day = today
+
     # --- Idempotency guard: skip if all teams already finalized for target_day ---
     teams_resp = supabase.table("teams").select("team_name,last_finalized_day").execute()
     teams_data = teams_resp.data or []
-    if teams_data and all((t.get("last_finalized_day") == str(target_day)) for t in teams_data):
-        return 
+    if teams_data and all((t.get("last_finalized_day") == str(today)) for t in teams_data):
+        print("⏭️ Already finalized today — skipping.")
+    return
+
 
 
 
