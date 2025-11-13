@@ -15,6 +15,7 @@ from supabase import create_client
 from dotenv import load_dotenv
 from datetime import date, datetime
 import matplotlib.pyplot as plt
+import math
 
 # ======================================
 # ⚙️ GAME DAY SETUP
@@ -419,7 +420,9 @@ for _, r in cakes_df.iterrows():
     required["prep"] += qty * float(r["prep_min_per_unit"])
 
     # OVEN (batch logic)
-    batches = qty / float(r["batch_size_units"]) if r["batch_size_units"] > 0 else 0.0
+    batches = math.ceil(qty / float(r["batch_size_units"])) if r["batch_size_units"] > 0 else 0
+
+
     required["oven"] += batches * float(r["oven_min_per_batch"])
 
     # OVEN RENTAL = oven time
