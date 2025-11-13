@@ -24,19 +24,15 @@ def finalize_day(target_date=None):
     today = date.today()
 
     # --- Determine target day (yesterday if not specified) ---
-    #target_day = (
-    #    datetime.strptime(target_date, "%Y-%m-%d").date()
-    #    if target_date else today - timedelta(days=1)
-    #)
-    target_day = today
-
+    target_day = (
+        datetime.strptime(target_date, "%Y-%m-%d").date()
+        if target_date else today - timedelta(days=1)
+    )
     # --- Idempotency guard: skip if all teams already finalized for target_day ---
     teams_resp = supabase.table("teams").select("team_name,last_finalized_day").execute()
     teams_data = teams_resp.data or []
-    if teams_data and all((t.get("last_finalized_day") == str(today)) for t in teams_data):
-        print("⏭️ Already finalized today — skipping.")
-    return
-
+    if teams_data and all((t.get("last_finalized_day") == str(target_day)) for t in teams_data):
+        return 
 
 
 
@@ -92,7 +88,10 @@ def finalize_day(target_date=None):
                 "price_usd": p["price_usd"]
             })
     all_prices = pd.DataFrame(all_price_rows) if all_price_rows else pd.DataFrame(columns=["team_name", "channel", "cake", "price_usd"])
-    avg_price_by_channel = all_prices.groupby("channel")["price_usd"].mean().to_dict() if not all_prices.empty else {}
+    avg_price_by_channel_cake = (
+    all_prices.groupby(["channel", "cake"])["price_usd"].mean().to_dict()
+)
+
 
     # --- Process each team that submitted a plan ---
     if not plans_df.empty:
@@ -132,7 +131,8 @@ def finalize_day(target_date=None):
                 alpha = params["alpha"].values[0]
                 beta = params["beta"].values[0]
                 gamma = params["gamma_competition"].values[0]
-                avg_ch_price = avg_price_by_channel.get(channel, my_price)
+                avg_ch_price = avg_price_by_channel_cake.get((channel, cake), my_price)
+
 
                 demand = max(0, alpha - beta * my_price + gamma * (avg_ch_price - my_price))
                 sold_units = min(qty, demand)

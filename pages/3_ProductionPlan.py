@@ -672,10 +672,12 @@ if capacity_feasible and ingredient_feasible and batch_ok:
                     st.error("❌ Failed to save production plan.")
                     st.exception(e)
                     st.session_state.confirm_submit_plan = False
-
+                    st.session_state.pop("production_table", None)
+                    st.rerun()
         with col2:
             if st.button("❌ Cancel"):
                 st.session_state.confirm_submit_plan = False
+                st.rerun()
                 st.info("Submission cancelled.")
 
 # ======================================

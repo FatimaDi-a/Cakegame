@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Leaderboard Page - Cake Business Simulation
@@ -26,7 +25,6 @@ today = date.today()
 day_number = max(1, (today - start_date).days + 1)
 st.session_state.day = day_number
 
-
 # =====================================
 # 🔒 LOGIN CHECK
 # =====================================
@@ -34,7 +32,7 @@ if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
     st.switch_page("Login.py")
     st.stop()
-    
+
 # ❌ Specific real-world calendar dates when the game is closed
 CLOSED_DATES = [
     "2025-11-22",
@@ -62,39 +60,22 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-# Developer toggle: Turn off auto-finalize for testing
-TEST_MODE = True
 
 # =====================================
 # 🕛 AUTO FINALIZATION
 # =====================================
-#def auto_finalize_once_per_day():
-#    """Run finalize_day() once per calendar day when leaderboard is first opened."""
-#    today_str = str(date.today())
-#    if st.session_state.get("last_finalized_day") != today_str:
-#        try:
-#            msg = finalize_day()
-#            st.session_state["last_finalized_day"] = today_str
-#        except Exception as e:
-#            st.error("❌ Auto-finalization failed.")
-#            st.exception(e)
-
-#if not TEST_MODE:
-#    auto_finalize_once_per_day()
-    
 def auto_finalize_once_per_day():
     """Run finalize_day() once per calendar day when leaderboard is first opened."""
     today_str = str(date.today())
-    try:
-        msg = finalize_day()
-        st.session_state["last_finalized_day"] = today_str
-    except Exception as e:
+    if st.session_state.get("last_finalized_day") != today_str:
+        try:
+            msg = finalize_day()
+            st.session_state["last_finalized_day"] = today_str
+        except Exception as e:
             st.error("❌ Auto-finalization failed.")
             st.exception(e)
 
-
 auto_finalize_once_per_day()
-
 
 # =====================================
 # 🎨 PAGE STYLING
@@ -164,7 +145,6 @@ if "day" in st.session_state:
         unsafe_allow_html=True
     )
 
-
 # =====================================
 # 💰 LOAD & DISPLAY DATA
 # =====================================
@@ -219,31 +199,6 @@ try:
 except Exception as e:
     st.error("❌ Failed to load leaderboard data.")
     st.exception(e)
-
-
-
-# =====================================
-# 🧪 MANUAL FINALIZATION (TEST ONLY)
-# =====================================
-
-st.markdown("---")
-st.subheader("🧪 Manual Finalization (Testing Only)")
-
-
-if st.button("🔧 Run Finalize Day Now"):
-    try:
-        msg = finalize_day()
-        st.success("✅ Manual finalization completed successfully!")
-        st.write(msg)
-
-        # Update session state so auto-finalize won't run again today
-        st.session_state["last_finalized_day"] = str(date.today())
-
-        st.rerun()
-
-    except Exception as e:
-        st.error("❌ Manual finalization failed.")
-        st.exception(e)
 
 # =====================================
 # 🚪 LOGOUT
