@@ -47,10 +47,11 @@ CLOSED_DATES = [
     "2025-11-26"
 ]
 
-today = datetime.now(BEIRUT_TZ).date().isoformat()
+today = datetime.now(BEIRUT_TZ).date()   # date object
+today_str = today.isoformat()            # string
 
 
-if today in CLOSED_DATES:
+if today_str in CLOSED_DATES:
     st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
     st.stop()
 
