@@ -62,6 +62,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Developer toggle: Turn off auto-finalize for testing
+TEST_MODE = True
 
 # =====================================
 # 🕛 AUTO FINALIZATION
@@ -77,7 +79,9 @@ def auto_finalize_once_per_day():
             st.error("❌ Auto-finalization failed.")
             st.exception(e)
 
-auto_finalize_once_per_day()
+if not TEST_MODE:
+    auto_finalize_once_per_day()
+
 
 # =====================================
 # 🎨 PAGE STYLING
