@@ -590,7 +590,8 @@ if capacity_feasible and ingredient_feasible and batch_ok:
             st.warning("⚠️ Please enter your production plan before saving.")
         else:
             st.session_state.confirm_submit_plan = True
-            st.experimental_rerun()
+            st.rerun()
+
 
     if st.session_state.confirm_submit_plan:
         st.warning(

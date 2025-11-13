@@ -614,7 +614,17 @@ try:
                 status = "✅ Finalized" if r.get("finalized") else "🧪 Test"
                 with st.expander(f"{status} — Day {r.get('day_number', '?')}"):
                     df = pd.DataFrame(json.loads(r["prices_json"]))
-                    st.dataframe(df[["channel", "cake", "price_usd"]], use_container_width=True)
+
+                    # Pivot the table so channels become columns
+                    pivot_df = df.pivot(index="cake", columns="channel", values="price_usd")
+                    
+                    # Ensure consistent column order
+                    pivot_df = pivot_df.reindex(columns=channels_df["channel"].tolist(), fill_value=0)
+                    
+                    pivot_df = pivot_df.reset_index().rename(columns={"cake": "Cake"})
+                    
+                    st.dataframe(pivot_df, use_container_width=True)
+
         else:
             st.info("No manually submitted price history yet.")
     else:
