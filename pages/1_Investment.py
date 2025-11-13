@@ -13,10 +13,14 @@ from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import date, datetime
+import pytz
+
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
 
 GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-today = date.today()
+today = datetime.now(BEIRUT_TZ).date()
+
 
 # Ensure day_number never goes below 1 before the game starts
 day_number = max(1, (today - start_date).days + 1)
@@ -62,7 +66,8 @@ CLOSED_DATES = [
     "2025-11-26"
 ]
 
-today = date.today().isoformat()
+today = datetime.now(BEIRUT_TZ).date().isoformat()
+
 
 if today in CLOSED_DATES:
     st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
@@ -907,13 +912,24 @@ try:
     has_production = bool(prod_check.data)
 
     # 2️⃣ Get today's investments
+    beirut_now = datetime.now(BEIRUT_TZ)
+    today_date = beirut_now.date()
+    
+    start_dt = datetime.combine(today_date, datetime.min.time()).astimezone(BEIRUT_TZ)
+    end_dt = datetime.combine(today_date, datetime.max.time()).astimezone(BEIRUT_TZ)
+    
+    start_iso = start_dt.astimezone(pytz.UTC).isoformat()
+    end_iso = end_dt.astimezone(pytz.UTC).isoformat()
+    
     inv_check = (
         supabase.table("investments")
         .select("*")
         .eq("team_name", st.session_state.team_name)
-        .gte("inserted_at", f"{date.today().isoformat()}T00:00:00")
+        .gte("inserted_at", start_iso)
+        .lte("inserted_at", end_iso)
         .execute()
     )
+
 
     if not inv_check.data:
         st.info("No investments found for today.")

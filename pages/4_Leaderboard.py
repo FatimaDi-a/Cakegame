@@ -14,12 +14,18 @@ from datetime import date, datetime
 from utils.finalize_day import finalize_day
 import pytz
 
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
+
 # =====================================
-# 📅 GAME DAY CALCULATION
+# 📅 GAME DAY SETUP
 # =====================================
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-today = date.today()
+today = datetime.now(BEIRUT_TZ).date()
+
 
 # Ensure day_number never goes below 1 before the game starts
 day_number = max(1, (today - start_date).days + 1)
@@ -28,10 +34,11 @@ st.session_state.day = day_number
 # =====================================
 # 🔒 LOGIN CHECK
 # =====================================
+
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
-    st.switch_page("Login.py")
     st.stop()
+
 
 # ❌ Specific real-world calendar dates when the game is closed
 CLOSED_DATES = [
@@ -40,7 +47,8 @@ CLOSED_DATES = [
     "2025-11-26"
 ]
 
-today = date.today().isoformat()
+today = datetime.now(BEIRUT_TZ).date().isoformat()
+
 
 if today in CLOSED_DATES:
     st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")

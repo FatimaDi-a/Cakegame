@@ -14,6 +14,9 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client
+import pytz
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
+
 
 # =====================================
 # 📅 GAME DAY SETUP
@@ -23,7 +26,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
 start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-today = date.today()
+today = datetime.now(BEIRUT_TZ).date()
+
 
 # Ensure day_number never goes below 1 before the game starts
 day_number = max(1, (today - start_date).days + 1)
@@ -46,7 +50,8 @@ CLOSED_DATES = [
     "2025-11-26"
 ]
 
-today = date.today().isoformat()
+today = datetime.now(BEIRUT_TZ).date().isoformat()
+
 
 if today in CLOSED_DATES:
     st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
