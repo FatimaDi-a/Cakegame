@@ -10,7 +10,7 @@ import os
 from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from utils.finalize_day import finalize_day
 import pytz
 
@@ -90,9 +90,16 @@ import pytz
 from datetime import datetime
 BEIRUT_TZ = pytz.timezone("Asia/Beirut")
 
-if st.button("🚀 Finalize Day (Run End-of-Day Processing)"):
-    finalize_day(target_date=str(datetime.now(BEIRUT_TZ).date()))
-    st.success("Day finalized successfully!")
+selected_day = st.date_input(
+    "Select day to finalize",
+    datetime.now(BEIRUT_TZ).date() - timedelta(days=1)
+)
+
+if st.button("Finalize Selected Day"):
+    finalize_day(str(selected_day))
+    st.success(f"Finalized day {selected_day}")
+    st.experimental_rerun()
+
 
 
 # =====================================
