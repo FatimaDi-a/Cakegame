@@ -89,16 +89,21 @@ auto_finalize_once_per_day()
 import pytz
 from datetime import datetime
 BEIRUT_TZ = pytz.timezone("Asia/Beirut")
-
+default_day = datetime.now(BEIRUT_TZ).date() - timedelta(days=1)
 selected_day = st.date_input(
-    "Select day to finalize",
-    datetime.now(BEIRUT_TZ).date() - timedelta(days=1)
+    label="Select a day to finalize:",
+    value=default_day,
+    max_value=datetime.now(BEIRUT_TZ).date()
 )
 
 if st.button("Finalize Selected Day"):
-    finalize_day(str(selected_day))
-    st.success(f"Finalized day {selected_day}")
-    st.experimental_rerun()
+    try:
+        finalize_day(str(selected_day))
+        st.success(f"✅ Successfully finalized day {selected_day}")
+        st.experimental_rerun()
+    except Exception as e:
+        st.error("❌ Finalization failed.")
+        st.exception(e)
 
 
 
