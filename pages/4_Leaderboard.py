@@ -100,7 +100,7 @@ if st.button("Finalize Selected Day"):
     try:
         finalize_day(str(selected_day))
         st.success(f"✅ Successfully finalized day {selected_day}")
-        st.experimental_rerun()
+        st.rerun()
     except Exception as e:
         st.error("❌ Finalization failed.")
         st.exception(e)
