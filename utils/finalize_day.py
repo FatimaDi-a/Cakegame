@@ -157,7 +157,7 @@ def finalize_day(target_date=None):
             money = float(team_data.data[0].get("money", 0.0))
             stock_value = float(team_data.data[0].get("stock_value", 0.0))
 
-            new_cash = money + total_profit - total_transport_cost
+            new_cash = money + total_profit 
             new_stock = max(stock_value - total_resource_cost, 0.0)
             total_value = new_cash + new_stock
 
