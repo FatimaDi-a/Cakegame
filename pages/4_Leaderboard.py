@@ -86,6 +86,8 @@ def auto_finalize_once_per_day():
 
 auto_finalize_once_per_day()
 
+finalize_day(target_date=str(datetime.now(BEIRUT_TZ).date()))
+
 # =====================================
 # 🎨 PAGE STYLING
 # =====================================

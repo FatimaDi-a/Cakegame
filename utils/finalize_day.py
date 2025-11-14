@@ -7,23 +7,17 @@ from supabase import create_client
 from dotenv import load_dotenv
 import pytz
 
-# =====================================
-# 🌍 SUPABASE INIT
-# =====================================
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
+
 def init_supabase():
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     return create_client(url, key)
 
-# Beirut timezone
-BEIRUT_TZ = pytz.timezone("Asia/Beirut")
-
-# =====================================
-# 🧮 FINALIZE FUNCTION
-# =====================================
 def finalize_day(target_date=None):
-    """Finalize actual profits for all teams — includes carry-forward for teams with no plans."""
+    """Finalize actual profits for all teams — includes carry-forward for teams with no plans.
+       Resource cost is now computed in USD (ingredients + capacity hours)."""
     supabase = init_supabase()
 
     # --- Use Beirut date instead of system date ---
@@ -73,16 +67,75 @@ def finalize_day(target_date=None):
     )
     prices_df = pd.DataFrame(prices_resp.data or []) if prices_resp.data else pd.DataFrame()
 
+    # --- Demand parameters (unchanged) ---
     demand_params = pd.read_csv(
         os.path.join(os.path.dirname(__file__), "..", "data", "instructor_demand_competition.csv")
     )
 
-    # --- Load channels ---
+    # --- Load channels (transport cost per unit) ---
     ch_resp = supabase.table("channels").select("channel, transport_cost_per_unit_usd").execute()
     ch_df = pd.DataFrame(ch_resp.data)
     ch_map = dict(zip(ch_df["channel"], ch_df["transport_cost_per_unit_usd"]))
 
-    # --- Flatten price rows ---
+    # --- Load ingredients + wages for costing ---
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    ingredients_df = pd.read_csv(os.path.join(data_dir, "ingredients.csv"))
+    wages_df = pd.read_csv(os.path.join(data_dir, "wages_energy.csv"))
+
+    # Ingredient cost map (name -> unit_cost_usd)
+    ing_cost_map = {
+        row["ingredient"].lower(): float(row["unit_cost_usd"])
+        for _, row in ingredients_df.iterrows()
+    }
+
+    # Capacity wage map (keys match required_json: "prep","oven","package","oven rental")
+    wage_param_map = {
+        "prep": "prep_wage_usd_per_hour",
+        "oven": "oven_wage_usd_per_hour",
+        "package": "package_wage_usd_per_hour",
+        "oven rental": "oven_rental_wage_usd_per_hour",
+    }
+
+    wage_map = {}
+    for cap_key, param_name in wage_param_map.items():
+        match = wages_df[wages_df["parameter"] == param_name]
+        if not match.empty:
+            wage_map[cap_key] = float(match["value"].iloc[0])
+        else:
+            wage_map[cap_key] = 0.0  # fallback if missing
+
+    # --- Load recipes to recompute ingredient usage (same logic as production_plan) ---
+    recipes_data = supabase.table("recipes").select("*").execute().data
+    recipes_df = pd.DataFrame(recipes_data) if recipes_data else pd.DataFrame()
+    if not recipes_df.empty:
+        recipes_df.columns = [c.lower() for c in recipes_df.columns]
+
+    def compute_required_ingredients_from_plan(plan_json):
+        """Replicates compute_required_ingredients from the production_plan page."""
+        if not plan_json or recipes_df.empty:
+            return {}
+
+        plan_df = pd.DataFrame(plan_json)
+        if plan_df.empty or "cake" not in plan_df.columns:
+            return {}
+
+        plan_df.columns = [c.lower() for c in plan_df.columns]
+        totals = plan_df.groupby("cake")["qty"].sum().to_dict()
+        needs = {}
+        for cake, qty in totals.items():
+            recipe = recipes_df[recipes_df["name"].str.lower() == str(cake).lower()]
+            if recipe.empty:
+                continue
+            row = recipe.iloc[0]
+            for ing_col in row.index:
+                if ing_col in ["id", "cake_id", "name", "created_at"]:
+                    continue
+                amt = qty * float(row[ing_col])
+                key = ing_col.lower()
+                needs[key] = needs.get(key, 0.0) + amt
+        return needs
+
+    # --- Flatten price rows (unchanged) ---
     all_price_rows = []
     for rec in prices_df.to_dict("records"):
         for p in json.loads(rec.get("prices_json", "[]")):
@@ -93,7 +146,9 @@ def finalize_day(target_date=None):
                 "price_usd": p["price_usd"]
             })
 
-    all_prices = pd.DataFrame(all_price_rows) if all_price_rows else pd.DataFrame(columns=["team_name", "channel", "cake", "price_usd"])
+    all_prices = pd.DataFrame(all_price_rows) if all_price_rows else pd.DataFrame(
+        columns=["team_name", "channel", "cake", "price_usd"]
+    )
     avg_price_by_channel_cake = all_prices.groupby(["channel", "cake"])["price_usd"].mean().to_dict()
 
     # --- Process each team that submitted a plan ---
@@ -102,7 +157,7 @@ def finalize_day(target_date=None):
 
             team_plans = plans_df[plans_df["team_name"] == team]
             plan_json = json.loads(team_plans.iloc[0].get("plan_json", "[]"))
-            required_json = json.loads(team_plans.iloc[0].get("required_json", "{}"))
+            required_json = json.loads(team_plans.iloc[0].get("required_json", "{}"))  # hours dict
 
             team_price_entries = all_prices[all_prices["team_name"] == team]
             if team_price_entries.empty:
@@ -111,8 +166,24 @@ def finalize_day(target_date=None):
 
             total_profit = 0.0
             total_transport_cost = 0.0
-            total_resource_cost = sum(required_json.values())
 
+            # --- 1) Compute ingredient usage & cost in USD ---
+            ingredient_needs = compute_required_ingredients_from_plan(plan_json)
+            ingredient_cost = 0.0
+            for ing_name, qty_used in ingredient_needs.items():
+                unit_cost = ing_cost_map.get(ing_name.lower(), 0.0)
+                ingredient_cost += float(qty_used) * unit_cost
+
+            # --- 2) Compute capacity cost in USD from required_json (hours * wage) ---
+            capacity_cost = 0.0
+            for cap_key, hours in required_json.items():
+                cap_key_norm = cap_key.lower()
+                wage = wage_map.get(cap_key_norm, 0.0)
+                capacity_cost += float(hours) * wage
+
+            total_resource_cost = ingredient_cost + capacity_cost
+
+            # --- 3) Profit calculation (unchanged, but transport only subtracted once) ---
             for item in plan_json:
                 cake = item.get("cake")
                 channel = item.get("channel")
@@ -157,8 +228,12 @@ def finalize_day(target_date=None):
             money = float(team_data.data[0].get("money", 0.0))
             stock_value = float(team_data.data[0].get("stock_value", 0.0))
 
-            new_cash = money + total_profit 
+            # Cash changes only by profit (sales - transport)
+            new_cash = money + total_profit
+
+            # Stock value decreases by the *USD value* of consumed resources
             new_stock = max(stock_value - total_resource_cost, 0.0)
+
             total_value = new_cash + new_stock
 
             supabase.table("teams").update({
@@ -166,17 +241,17 @@ def finalize_day(target_date=None):
                 "stock_value": new_stock,
                 "last_profit": total_profit,
                 "last_transport_cost": total_transport_cost,
-                "last_resource_cost": total_resource_cost,
+                "last_resource_cost": total_resource_cost,  # now in USD
                 "total_value": total_value,
                 "last_finalized_day": str(target_day)
             }).eq("team_name", team).execute()
 
-            # Update production plan record
+            # Update production plan record with realized profit
             supabase.table("production_plans").update({
                 "profit_usd": total_profit
             }).eq("team_name", team).gte("inserted_at", start_iso).lte("inserted_at", end_iso).execute()
 
-    # --- Handle teams WITHOUT plans ---
+    # --- Handle teams WITHOUT plans (carry forward) ---
     all_teams_resp = supabase.table("teams").select("team_name, money, stock_value").execute()
     all_team_names = [t["team_name"] for t in all_teams_resp.data]
     finalized_teams = set(plans_df["team_name"].unique()) if not plans_df.empty else set()
