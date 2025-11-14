@@ -86,7 +86,14 @@ def auto_finalize_once_per_day():
 
 auto_finalize_once_per_day()
 
-finalize_day(target_date=str(datetime.now(BEIRUT_TZ).date()))
+import pytz
+from datetime import datetime
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
+
+if st.button("🚀 Finalize Day (Run End-of-Day Processing)"):
+    finalize_day(target_date=str(datetime.now(BEIRUT_TZ).date()))
+    st.success("Day finalized successfully!")
+
 
 # =====================================
 # 🎨 PAGE STYLING
