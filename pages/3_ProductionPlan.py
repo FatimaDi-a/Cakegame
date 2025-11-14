@@ -11,13 +11,15 @@ import pandas as pd
 import numpy as np
 import json
 import os
+from pathlib import Path
 from supabase import create_client
 from dotenv import load_dotenv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import matplotlib.pyplot as plt
 import math
 import pytz
 BEIRUT_TZ = pytz.timezone("Asia/Beirut")
+st.set_page_config(page_title="Production Plan", page_icon="🍰", layout="wide")
 
 # =====================================
 # 📅 GAME DAY SETUP
@@ -25,14 +27,14 @@ BEIRUT_TZ = pytz.timezone("Asia/Beirut")
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
-start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
-today = datetime.now(BEIRUT_TZ).date()
+#GAME_START_DATE = os.getenv("GAME_START_DATE", "2025-11-13")
+#start_date = datetime.strptime(GAME_START_DATE, "%Y-%m-%d").date()
+#today = datetime.now(BEIRUT_TZ).date()
 
 
 # Ensure day_number never goes below 1 before the game starts
-day_number = max(1, (today - start_date).days + 1)
-st.session_state.day = day_number
+#day_number = max(1, (today - start_date).days + 1)
+#st.session_state.day = day_number
 
 # =====================================
 # 🔒 LOGIN CHECK
@@ -42,14 +44,9 @@ if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("Please log in first.")
     st.stop()
 
-from datetime import date
 
 # ❌ Specific real-world calendar dates when the game is closed
-CLOSED_DATES = [
-    "2025-11-22",
-    "2025-11-24",
-    "2025-11-26"
-]
+CLOSED_DATES = []
 
 today = datetime.now(BEIRUT_TZ).date()   # date object
 today_str = today.isoformat()            # string
@@ -59,23 +56,70 @@ if today_str in CLOSED_DATES:
     st.warning(f"🚫 The game is closed today ({today}). Please come back tomorrow!")
     st.stop()
 
-# ======================================
-# 🌍 SUPABASE CONNECTION
-# ======================================
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+# =====================================
+# 🌍 SUPABASE SETUP
+# =====================================
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Supabase credentials missing.")
+    st.error("❌ Missing Supabase credentials. Check .env file.")
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# =====================================
+# 🌟 GLOBAL GAME DAY SELECTOR
+# =====================================
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+GAME_START_DATE = datetime.strptime(os.getenv("GAME_START_DATE", "2025-11-13"), "%Y-%m-%d").date()
+
+today_real = datetime.now(BEIRUT_TZ).date()
+max_game_day = max(1, (today_real - GAME_START_DATE).days + 1)
+
+# Fetch finalized days
+teams_resp = supabase.table("teams").select("last_finalized_day").execute()
+finalized_days = set()
+
+for t in teams_resp.data:
+    d = t.get("last_finalized_day")
+    if d:
+        finalized_days.add(datetime.strptime(d, "%Y-%m-%d").date())
+
+# Find earliest unfinalized day
+earliest_unfinalized = None
+for i in range(1, max_game_day + 1):
+    day_date = GAME_START_DATE + timedelta(days=i - 1)
+    if day_date not in finalized_days:
+        earliest_unfinalized = i
+        break
+
+# If all days are finalized, default to max day
+if earliest_unfinalized is None:
+    earliest_unfinalized = max_game_day
+
+# Set and update session_state
+if "game_day" not in st.session_state:
+    st.session_state.game_day = earliest_unfinalized
+
+st.session_state.game_day = st.number_input(
+    "📅 Select Game Day",
+    min_value=1,
+    max_value=max_game_day,
+    value=st.session_state.game_day,
+    step=1
+)
+
+selected_day = GAME_START_DATE + timedelta(days=st.session_state.game_day - 1)
+day_number = st.session_state.game_day
+
+
 
 # ======================================
 # 🎨 PAGE CONFIG
 # ======================================
-st.set_page_config(page_title="Production Plan", page_icon="🍰", layout="wide")
 
 st.markdown(
     """

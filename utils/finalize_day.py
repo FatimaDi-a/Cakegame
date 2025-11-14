@@ -7,8 +7,8 @@ from supabase import create_client
 from dotenv import load_dotenv
 import pytz
 
-BEIRUT_TZ = pytz.timezone("Asia/Beirut")
 
+BEIRUT_TZ = pytz.timezone("Asia/Beirut")
 def init_supabase():
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     url = os.getenv("SUPABASE_URL")

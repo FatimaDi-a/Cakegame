@@ -8,6 +8,7 @@ Login Page — Cake Business Simulation
 
 import base64
 import streamlit as st
+import supabase
 from supabase import create_client
 import os
 from dotenv import load_dotenv
@@ -183,7 +184,9 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.team_name = team_name
                 st.session_state.money = team["money"]
-                st.session_state.day = team["day"]
+                # Will be updated automatically on the other pages
+                st.session_state.game_day = st.session_state.get("game_day", 1)
+                st.session_state.day = st.session_state.game_day 
 
                 st.success(f"Welcome back, {team_name}! You have ${team['money']}.")
                 st.switch_page("pages/4_Leaderboard.py")
