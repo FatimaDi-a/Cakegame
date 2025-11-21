@@ -292,6 +292,21 @@ st.markdown(
 st.title("💰 Investment Decisions")
 st.write(f"Welcome, **{st.session_state.team_name}**!")
 
+if "last_save_time" not in st.session_state:
+    st.session_state.last_save_time = None
+
+
+COOLDOWN_SECONDS = 20
+
+def save_on_cooldown():
+    last = st.session_state.last_save_time
+    if last is None:
+        return False, 0
+
+    elapsed = (datetime.now() - last).total_seconds()
+    remaining = max(0, int(COOLDOWN_SECONDS - elapsed))
+
+    return remaining > 0, remaining
 
 # ============================
 # 📊 LOAD CSV DATA
@@ -579,11 +594,17 @@ else:
         if st.session_state.confirm_investment:
             st.warning("⚠️ Are you sure you want to save these investment decisions?")
             col1, col2 = st.columns(2)
-    
+            cooling, remaining = save_on_cooldown()
+            if cooling:
+                st.warning(f"⏳ Please wait {remaining} seconds before saving again.")
+                yes_disabled = True
+            else:
+                yes_disabled = False
             with col1:
-                if st.button("✅ Yes, save now"):
+                if st.button("✅ Yes, save now", disabled=yes_disabled):
                     st.session_state.confirm_investment = False
-    
+                    st.session_state.last_save_time = datetime.now()
+
                     try:
                         # 2️⃣ Insert investment record
                         payload = {
@@ -671,6 +692,7 @@ else:
     
                         st.success("✅ Investment saved successfully!")
                         st.rerun()
+                        
     
                     except Exception as e:
                         st.error("❌ Failed to save investment.")
@@ -832,167 +854,6 @@ try:
 except Exception as e:
     st.error("❌ Failed to load investment history.")
     st.exception(e)
-
-
-# ============================
-# 🔁 SAFE REVOKE THIS ROUND'S INVESTMENT
-# ============================
-st.markdown("---")
-st.subheader("🔁 Revoke This Round's Investment")
-
-# Initialize confirmation state if needed
-if "confirm_revoke" not in st.session_state:
-    st.session_state.confirm_revoke = False
-
-try:
-    # 1️⃣ Check if production has already been submitted for this round
-    prod_check = (
-        supabase.table("production_plans")
-        .select("id")
-        .eq("team_name", st.session_state.team_name)
-        .eq("round_number", current_round)
-        .execute()
-    )
-    has_production = bool(prod_check.data)
-
-    # 2️⃣ Load ALL investments for this round
-    inv_check = (
-        supabase.table("investments")
-        .select("*")
-        .eq("team_name", st.session_state.team_name)
-        .eq("round_number", current_round)
-        .execute()
-    )
-
-    if not inv_check.data:
-        st.info(f"No investments found for Round {current_round}.")
-        st.stop()
-
-    if has_production:
-        st.warning("⚠️ You’ve already submitted your production plan — revoking investments is no longer allowed.")
-        st.stop()
-
-    # Total spent this round
-    total_round_cost = sum(float(inv["total_cost_usd"]) for inv in inv_check.data)
-    st.info(f"💰 You invested **${total_round_cost:,.2f}** in this round.")
-
-    # --- Main revoke button ---
-    if not st.session_state.confirm_revoke:
-        if st.button(f"🚫 Revoke Round {current_round} Investment"):
-            st.session_state.confirm_revoke = True
-            st.rerun()
-
-    # --- Confirmation UI ---
-    if st.session_state.confirm_revoke:
-        st.warning(
-            f"⚠️ Are you sure you want to revoke ALL investments for Round {current_round}? "
-            "This action cannot be undone."
-        )
-
-        col_r1, col_r2 = st.columns(2)
-
-        # ============================
-        # YES — REVOKE NOW
-        # ============================
-        with col_r1:
-            if st.button("✅ Yes, revoke now"):
-                st.session_state.confirm_revoke = False
-
-                try:
-                    # 3️⃣ Roll back finances FIRST (safe)
-                    team_resp = (
-                        supabase.table("teams")
-                        .select("money, stock_value")
-                        .eq("team_name", st.session_state.team_name)
-                        .maybe_single()
-                        .execute()
-                    )
-                    team = team_resp.data
-                    new_money = float(team["money"]) + total_round_cost
-                    new_stock = float(team["stock_value"]) - total_round_cost
-
-                    supabase.table("teams").update(
-                        {"money": new_money, "stock_value": new_stock}
-                    ).eq("team_name", st.session_state.team_name).execute()
-
-                    # 4️⃣ Roll back INVENTORY for each investment entry
-                    for inv in inv_check.data:
-                        # INGREDIENTS
-                        for ing in json.loads(inv["ingredients_json"]):
-                            qty = float(ing["buy_qty"])
-                            if qty <= 0:
-                                continue
-
-                            name = ing["ingredient"]  # EXACT name used on save
-
-                            inv_row = (
-                                supabase.table("inventory")
-                                .select("id, quantity")
-                                .eq("team_name", st.session_state.team_name)
-                                .eq("resource_name", name)
-                                .eq("category", "ingredient")
-                                .maybe_single()
-                                .execute()
-                            )
-
-                            if inv_row and inv_row.data:
-                                new_qty = max(0, float(inv_row.data["quantity"]) - qty)
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", inv_row.data["id"]).execute()
-
-                        # CAPACITY
-                        for cap in json.loads(inv["capacity_json"]):
-                            qty = float(cap["hours"])
-                            if qty <= 0:
-                                continue
-                        
-                            # ⭐ use EXACT saved name
-                            name = cap["display_name"]
-                        
-                            inv_row = (
-                                supabase.table("inventory")
-                                .select("id, quantity")
-                                .eq("team_name", st.session_state.team_name)
-                                .eq("resource_name", name)
-                                .eq("category", "capacity")
-                                .maybe_single()
-                                .execute()
-                            )
-                        
-                            if inv_row and inv_row.data:
-                                new_qty = max(0, float(inv_row.data["quantity"]) - qty)
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", inv_row.data["id"]).execute()
-
-
-                    # 5️⃣ Delete ALL investment rows for this round
-                    ids_to_delete = [inv["id"] for inv in inv_check.data]
-                    for inv_id in ids_to_delete:
-                        supabase.table("investments").delete().eq("id", inv_id).execute()
-
-                    st.success(f"✅ Investments for Round {current_round} successfully revoked!")
-                    st.rerun()
-
-                except Exception as e:
-                    st.error("❌ Failed to revoke investments.")
-                    st.exception(e)
-
-        # ============================
-        # CANCEL
-        # ============================
-        with col_r2:
-            if st.button("❌ Cancel"):
-                st.session_state.confirm_revoke = False
-                st.rerun()
-
-except Exception as e:
-    st.error("❌ Could not check revocation status.")
-    st.exception(e)
-
-
-
 
 
 
