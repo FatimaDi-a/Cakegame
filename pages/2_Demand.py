@@ -634,9 +634,10 @@ if st.button("📊 Calculate Demand"):
 
             if round_number == 1:
                 D = max(0, alpha - beta * my_price)
+                D = int(D)
             else:
                 D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
-
+                D = int(D)
             results.append(
                 {
                     "Cake": cake,
