@@ -633,32 +633,47 @@ try:
         .order("round_number", desc=True)
         .execute()
     )
-    investments = response.data
+    investments = response.data or []
 
     if not investments:
         st.info("No previous investments found yet.")
     else:
         inv_df = pd.DataFrame(investments)
 
-        st.write(inv_df[["round_number", "total_cost_usd", "ingredients_json", "capacity_json"]])
-
-        # Group by ROUND instead of by DATE
+        # Group by ROUND
         for rnd, group in inv_df.groupby("round_number", sort=False):
 
-            total_round_cost = group["total_cost_usd"].sum()
+            total_round_cost = group["total_cost_usd"].fillna(0).sum()
             if total_round_cost <= 0:
                 continue
 
             with st.expander(f"🎯 Round {rnd} — Total Spent: ${total_round_cost:,.2f}"):
-                all_ingredients, all_capacity = [], []
 
-                # Collect JSON entries
-                for _, inv in group.iterrows():
-                    try:
-                        all_ingredients.extend(json.loads(inv["ingredients_json"]))
-                        all_capacity.extend(json.loads(inv["capacity_json"]))
-                    except:
-                        pass
+                all_ingredients = []
+                all_capacity = []
+
+                # --- Parse JSON safely ---
+                for _, row in group.iterrows():
+
+                    # INGREDIENT JSON
+                    ing_raw = row.get("ingredients_json")
+                    if isinstance(ing_raw, str):
+                        try:
+                            all_ingredients.extend(json.loads(ing_raw))
+                        except:
+                            pass
+                    elif isinstance(ing_raw, list):
+                        all_ingredients.extend(ing_raw)
+
+                    # CAPACITY JSON
+                    cap_raw = row.get("capacity_json")
+                    if isinstance(cap_raw, str):
+                        try:
+                            all_capacity.extend(json.loads(cap_raw))
+                        except:
+                            pass
+                    elif isinstance(cap_raw, list):
+                        all_capacity.extend(cap_raw)
 
                 # ============================
                 # 🧺 INGREDIENTS PURCHASED
@@ -693,13 +708,11 @@ try:
 
                         ing_display["subtotal_usd"] = ing_display["subtotal_usd"].round(2)
 
-                        ing_display = ing_display.rename(
-                            columns={
-                                "Ingredient (unit)": "Ingredient",
-                                "buy_qty": "Quantity",
-                                "subtotal_usd": "Subtotal (USD)",
-                            }
-                        )
+                        ing_display = ing_display.rename(columns={
+                            "Ingredient (unit)": "Ingredient",
+                            "buy_qty": "Quantity",
+                            "subtotal_usd": "Subtotal (USD)",
+                        })
 
                         ing_display["Quantity"] = ing_display["Quantity"].map(lambda x: f"{x:g}")
                         ing_display["Subtotal (USD)"] = ing_display["Subtotal (USD)"].map(
@@ -726,14 +739,11 @@ try:
 
                         cap_df["Capacity (unit)"] = cap_df["display_name"] + " (hours)"
 
-
                         capacity_order = [name + " (hours)" for name in capacity_cost_lookup.keys()]
-
-
 
                         cap_grouped = (
                             cap_df.groupby("Capacity (unit)", as_index=False)[["hours", "subtotal_usd"]]
-                                 .sum()
+                            .sum()
                         )
 
                         cap_display = (
@@ -745,13 +755,11 @@ try:
 
                         cap_display["subtotal_usd"] = cap_display["subtotal_usd"].round(2)
 
-                        cap_display = cap_display.rename(
-                            columns={
-                                "Capacity (unit)": "Capacity",
-                                "hours": "Hours Purchased",
-                                "subtotal_usd": "Subtotal (USD)",
-                            }
-                        )
+                        cap_display = cap_display.rename(columns={
+                            "Capacity (unit)": "Capacity",
+                            "hours": "Hours Purchased",
+                            "subtotal_usd": "Subtotal (USD)",
+                        })
 
                         cap_display["Hours Purchased"] = cap_display["Hours Purchased"].map(lambda x: f"{x:g}")
                         cap_display["Subtotal (USD)"] = cap_display["Subtotal (USD)"].map(
@@ -769,6 +777,9 @@ try:
 except Exception as e:
     st.error("❌ Failed to load investment history.")
     st.exception(e)
+
+
+
 
 
 
