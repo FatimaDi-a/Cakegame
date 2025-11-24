@@ -119,7 +119,13 @@ def finalize_round(round_number: int):
         # Flatten JSON into usable rows
         price_rows = []
         for rec in latest_price_per_team.values():
-            for item in json.loads(rec.get("prices_json", "[]")):
+            prices_raw = rec.get("prices_json", [])
+            if isinstance(prices_raw, str):
+                prices_list = json.loads(prices_raw)
+            else:
+                prices_list = prices_raw
+            
+            for item in prices_list:
                 price_rows.append({
                     "team_name": rec["team_name"],
                     "channel": item["channel"],
@@ -209,8 +215,21 @@ def finalize_round(round_number: int):
         for team in plans_df["team_name"].unique():
 
             team_plan = plans_df[plans_df["team_name"] == team].iloc[0]
-            plan_json = json.loads(team_plan["plan_json"])
-            required_json = json.loads(team_plan["required_json"])
+            raw_plan = team_plan["plan_json"]
+
+            if isinstance(raw_plan, str):
+                plan_json = json.loads(raw_plan)
+            else:
+                plan_json = raw_plan  # Supabase already returned dict/list
+
+            raw_required = team_plan["required_json"]
+
+            if isinstance(raw_required, str):
+                required_json = json.loads(raw_required)
+            else:
+                required_json = raw_required or {}
+
+
 
             team_prices = price_df[price_df["team_name"] == team]
 
@@ -256,7 +275,8 @@ def finalize_round(round_number: int):
                 demand = int(alpha - beta * my_price + gamma * (avg_p - my_price))
                 demand = max(0,demand)
                 demand = int(demand)
-                qty = int(qty)
+                qty = int(float(item["qty"]))
+
                 sold = min(qty, demand)
 
                 revenue = sold * my_price
