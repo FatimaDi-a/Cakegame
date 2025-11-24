@@ -658,167 +658,179 @@ if st.button("📊 Calculate Demand"):
         st.exception(e)
 
 # =====================================
-# 💾 SAVE FINAL PRICES (LOCK-IN PER ROUND)
+# 💾 SAVE FINAL PRICES (ONE SUBMISSION PER ROUND, NO CONFIRMATION)
 # =====================================
 
-if "confirm_submit" not in st.session_state:
-    st.session_state.confirm_submit = False
+# init state flag
+if "saving_prices" not in st.session_state:
+    st.session_state.saving_prices = False
+
 if submissions_locked(supabase):
     st.error("🚫 Submissions are locked by the instructor.")
 else:
-    if st.button("💾 Submit Final Prices", disabled=submit_disabled):
-        if not pricing_entries:
+    # disable button while saving OR if we've logically disabled submission
+    button_disabled = st.session_state.saving_prices or submit_disabled
+
+    if st.button("💾 Submit Final Prices", disabled=button_disabled):
+        if submit_disabled:
+            st.warning("You already submitted final prices for this round.")
+        elif not pricing_entries:
             st.warning("⚠️ Please enter prices before saving.")
-            st.stop()
-        st.session_state.confirm_submit = True
-        st.rerun()
+        else:
+            # mark as saving and rerun, like with investments / production plan
+            st.session_state.saving_prices = True
+            st.rerun()
 
-if st.session_state.confirm_submit:
-    st.warning("⚠️ Are you sure you want to submit? This can only be done once per round!")
-    col1, col2 = st.columns(2)
 
-    with col1:
-        if st.button("✅ Yes, submit now"):
-            try:
-                payload = {
-                    "team_name": st.session_state.team_name,
-                    "prices_json": json.dumps(pricing_entries),
-                    "round_number": round_number,
-                    "finalized": True,
-                    "auto_filled": False,
-                }
+# =====================================
+# 🚀 PROCESS FINAL PRICE SUBMISSION AFTER RERUN
+# =====================================
+if st.session_state.saving_prices:
+    try:
+        # 0️⃣ Double-check: enforce ONE submission per round
+        existing_this_round = (
+            supabase.table("prices")
+            .select("id")
+            .eq("team_name", st.session_state.team_name)
+            .eq("round_number", round_number)
+            .limit(1)
+            .execute()
+            .data
+        )
 
-                existing_this_round = (
+        if existing_this_round:
+            st.warning("You already submitted final prices for this round.")
+        else:
+            # 1️⃣ Save prices (INSERT only – no updates)
+            payload = {
+                "team_name": st.session_state.team_name,
+                "prices_json": json.dumps(pricing_entries),
+                "round_number": round_number,
+                "finalized": True,
+                "auto_filled": False,
+            }
+
+            supabase.table("prices").insert(payload).execute()
+
+            # =====================================
+            # 📈 CALCULATE & SAVE DEMAND FOR THIS ROUND
+            # =====================================
+
+            # Load demand parameters
+            demand_params = pd.read_csv(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "instructor_demand_competition.csv",
+                )
+            )
+
+            # Load competitor prices (previous round)
+            if round_number == 1:
+                competitor_avg = {}
+            else:
+                prev_round = round_number - 1
+                prev_prices_data = (
                     supabase.table("prices")
-                    .select("id")
-                    .eq("team_name", st.session_state.team_name)
-                    .eq("round_number", round_number)
-                    .limit(1)
+                    .select("team_name, prices_json")
+                    .eq("round_number", prev_round)
                     .execute()
                     .data
                 )
 
-                if existing_this_round:
-                    supabase.table("prices").update(payload).eq(
-                        "id", existing_this_round[0]["id"]
-                    ).execute()
-                else:
-                    supabase.table("prices").insert(payload).execute()
-                # =====================================
-                # 📈 CALCULATE & SAVE DEMAND FOR THIS ROUND
-                # =====================================
-                
-                # Load demand parameters
-                demand_params = pd.read_csv(
-                    os.path.join(
-                        os.path.dirname(__file__),
-                        "..",
-                        "data",
-                        "instructor_demand_competition.csv",
-                    )
-                )
-                
-                # Load competitor prices (previous round)
-                if round_number == 1:
-                    competitor_avg = {}
-                else:
-                    prev_round = round_number - 1
-                    prev_prices_data = (
-                        supabase.table("prices")
-                        .select("team_name, prices_json")
-                        .eq("round_number", prev_round)
-                        .execute()
-                        .data
-                    )
-                
-                    prev_rows = []
-                    for rec in prev_prices_data:
-                        for p in json.loads(rec["prices_json"]):
-                            prev_rows.append({
+                prev_rows = []
+                for rec in prev_prices_data:
+                    for p in json.loads(rec["prices_json"]):
+                        prev_rows.append(
+                            {
                                 "team_name": rec["team_name"],
                                 "channel": p["channel"],
                                 "cake": p["cake"],
                                 "price_usd": p["price_usd"],
-                            })
-                
-                    if prev_rows:
-                        prev_df = pd.DataFrame(prev_rows)
-                        competitor_avg = prev_df.groupby(
-                            ["channel", "cake"]
-                        )["price_usd"].mean().to_dict()
-                    else:
-                        competitor_avg = {}
-                
-                # Compute demand for each (cake, channel) you priced
-                demand_results = []
-                for entry in pricing_entries:
-                    cake = entry["cake"]
-                    channel = entry["channel"]
-                    my_price = entry["price_usd"]
-                
-                    params = demand_params[
-                        (demand_params["cake_name"] == cake) &
-                        (demand_params["channel"] == channel)
-                    ]
-                    if params.empty:
-                        continue
-                
-                    alpha = params["alpha"].values[0]
-                    beta = params["beta"].values[0]
-                    gamma = params["gamma_competition"].values[0]
-                
-                    avg_other = competitor_avg.get((channel, cake), 0.0)
-                
-                    if round_number == 1:
-                        D = max(0, alpha - beta * my_price)
-                        D = int(D)
-                    else:
-                        D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
-                        D = int(D)
-                    demand_results.append({
+                            }
+                        )
+
+                if prev_rows:
+                    prev_df = pd.DataFrame(prev_rows)
+                    competitor_avg = (
+                        prev_df.groupby(["channel", "cake"])["price_usd"]
+                        .mean()
+                        .to_dict()
+                    )
+                else:
+                    competitor_avg = {}
+
+            # Compute demand for each (cake, channel) you priced
+            demand_results = []
+            for entry in pricing_entries:
+                cake = entry["cake"]
+                channel = entry["channel"]
+                my_price = entry["price_usd"]
+
+                params = demand_params[
+                    (demand_params["cake_name"] == cake)
+                    & (demand_params["channel"] == channel)
+                ]
+                if params.empty:
+                    continue
+
+                alpha = params["alpha"].values[0]
+                beta = params["beta"].values[0]
+                gamma = params["gamma_competition"].values[0]
+
+                avg_other = competitor_avg.get((channel, cake), 0.0)
+
+                if round_number == 1:
+                    D = max(0, alpha - beta * my_price)
+                else:
+                    D = max(
+                        0, alpha - beta * my_price + gamma * (avg_other - my_price)
+                    )
+                D = int(D)
+
+                demand_results.append(
+                    {
                         "cake": cake,
                         "channel": channel,
-                        "demand": round(D, 1)
-                    })
-                
-                # Save into the demands table
-                payload_demand = {
-                    "team_name": st.session_state.team_name,
-                    "round_number": round_number,
-                    "demands_json": json.dumps(demand_results),
-                }
-                
-                existing_demand = (
-                    supabase.table("demands")
-                    .select("id")
-                    .eq("team_name", st.session_state.team_name)
-                    .eq("round_number", round_number)
-                    .execute()
-                    .data
+                        "demand": round(D, 1),
+                    }
                 )
-                
-                if existing_demand:
-                    supabase.table("demands").update(payload_demand).eq(
-                        "id", existing_demand[0]["id"]
-                    ).execute()
-                else:
-                    supabase.table("demands").insert(payload_demand).execute()
 
-                
+            # Save into the demands table
+            payload_demand = {
+                "team_name": st.session_state.team_name,
+                "round_number": round_number,
+                "demands_json": json.dumps(demand_results),
+            }
 
-                st.success("✅ Final prices saved! You can’t edit them again this round.")
-                st.session_state.confirm_submit = False
-                st.rerun()
+            existing_demand = (
+                supabase.table("demands")
+                .select("id")
+                .eq("team_name", st.session_state.team_name)
+                .eq("round_number", round_number)
+                .limit(1)
+                .execute()
+                .data
+            )
 
-            except Exception as e:
-                st.error("❌ Failed to save final prices.")
-                st.exception(e)
+            # one submission per round → don't overwrite if somehow exists
+            if existing_demand:
+                st.warning("Demand for this round already exists; not overwriting.")
+            else:
+                supabase.table("demands").insert(payload_demand).execute()
 
-    with col2:
-        if st.button("❌ Cancel"):
-            st.session_state.confirm_submit = False
-            st.info("Submission cancelled.")
-            st.rerun()
+            st.success("✅ Final prices saved! You can’t edit them again this round.")
+
+        # reset saving flag and rerun to refresh UI / disable button
+        st.session_state.saving_prices = False
+        st.rerun()
+
+    except Exception as e:
+        st.error("❌ Failed to save final prices.")
+        st.session_state.saving_prices = False
+        st.exception(e)
+
 
 # =====================================
 # 📜 HISTORY

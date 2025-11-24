@@ -345,6 +345,24 @@ capacity_totals = get_inventory(team, "capacity")
 # 📝 BUILD PRODUCTION TABLE
 # ======================================
 st.subheader("🧁 Production Planning")
+st.markdown(
+    """
+    <div style="
+        background-color: #FFF2E0;
+        border: 1px solid #E0B070;
+        border-radius: 10px;
+        padding: 0.8rem 1rem;
+        margin-bottom: 1rem;
+        color: #4B2E05;
+        font-weight: 600;
+        font-size: 1.05rem;
+    ">
+        💡 <strong>Note:</strong> Submitting production plan can only be done <u>once per round</u>.
+        After you click <em>Submit Production Plan</em>, you won't be able to edit them again for this round.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 rows = []
 for _, cake_row in cakes_df.iterrows():
@@ -648,112 +666,71 @@ already_submitted = (
 locked = bool(already_submitted)
 
 # ======================================
-# 💾 SAVE PLAN — WITH CONFIRMATION
+# 💾 SAFE SUBMIT PRODUCTION PLAN
 # ======================================
-if "confirm_prod_submit" not in st.session_state:
-    st.session_state.confirm_prod_submit = False
 
+# Init state flag
+if "saving_plan" not in st.session_state:
+    st.session_state.saving_plan = False
+
+# Check lock
 if submissions_locked(supabase):
     st.error("🚫 Submissions are locked by the instructor.")
+
 else:
-    if st.button("💾 Submit Production Plan", disabled=locked):
+    # Disable button while processing
+    button_disabled = st.session_state.saving_plan or locked
+
+    if st.button("💾 Submit Production Plan", disabled=button_disabled):
         if locked:
             st.warning("You already submitted this round.")
         elif not plan_entries:
             st.warning("⚠️ Enter quantities before saving.")
+        elif not capacity_ok:
+            st.error("❌ Capacity exceeded!")
+        elif not ingredient_ok:
+            st.error("❌ Not enough ingredients!")
+        elif not batch_ok:
+            st.error("❌ Minimum batch rule violated!")
         else:
-            st.session_state.confirm_prod_submit = True
+            st.session_state.saving_plan = True
             st.rerun()
 
-# Confirmation dialog
-if st.session_state.confirm_prod_submit:
-    st.warning(
-        "⚠️ Are you sure you want to submit this production plan? "
-        "You cannot edit it afterward!"
-    )
 
-    col1, col2 = st.columns(2)
+# ======================================
+# PROCESS SAVE AFTER RERUN
+# ======================================
+if st.session_state.saving_plan:
+    try:
+        # 🚀 One atomic RPC call (you will add this RPC)
+        supabase.rpc(
+            "save_production_plan_atomic",
+            {
+                "p_team_name": team,
+                "p_round": selected_round,
+                "p_plan": plan_entries,
+                "p_profit": profit_today,
+                "p_required": required,
+                "p_ing_used": ingredient_needs,
+                "p_cap_used": required,
+            }
+        ).execute()
 
-    with col1:
-        if st.button("✅ Yes, submit now"):
-            try:
-                # 1️⃣ Save the production plan
-                supabase.table("production_plans").insert(
-                    {
-                        "team_name": team,
-                        "round_number": selected_round,
-                        "plan_json": json.dumps(plan_entries),
-                        "profit_usd": profit_today,
-                        "required_json": json.dumps(required),
-                    }
-                ).execute()
+        st.success("✅ Production plan submitted and stock updated!")
 
-                # 2️⃣ Load inventory rows once for safe matching (case-insensitive)
-                ing_rows = (
-                    supabase.table("inventory")
-                    .select("id, resource_name, quantity")
-                    .eq("team_name", team)
-                    .eq("category", "ingredient")
-                    .execute()
-                    .data
-                )
-                cap_rows = (
-                    supabase.table("inventory")
-                    .select("id, resource_name, quantity")
-                    .eq("team_name", team)
-                    .eq("category", "capacity")
-                    .execute()
-                    .data
-                )
+        # Reset flag so they can submit again next round
+        st.session_state.saving_plan = False
 
-                # 3️⃣ DEDUCT INGREDIENT STOCK
-                for ing, used_qty in ingredient_needs.items():
-                    match = next(
-                        (
-                            row
-                            for row in ing_rows
-                            if row["resource_name"].lower() == ing.lower()
-                        ),
-                        None,
-                    )
-                    if match:
-                        new_qty = max(0, float(match["quantity"]) - used_qty)
-                        supabase.table("inventory").update(
-                            {"quantity": new_qty}
-                        ).eq("id", match["id"]).execute()
+        # Force UI refresh
+        st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
 
-                # 4️⃣ DEDUCT CAPACITY HOURS
-                for cap_name, hours_used in required.items():
-                    match = next(
-                        (
-                            row
-                            for row in cap_rows
-                            if row["resource_name"].lower() == cap_name.lower()
-                        ),
-                        None,
-                    )
-                    if match:
-                        new_qty = max(0, float(match["quantity"]) - hours_used)
-                        supabase.table("inventory").update(
-                            {"quantity": new_qty}
-                        ).eq("id", match["id"]).execute()
+        st.rerun()
 
-        
-                st.success("✅ Production plan submitted and stock updated!")
-                st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
-                st.session_state.confirm_prod_submit = False
-                st.rerun()
+    except Exception as e:
+        st.error("❌ Failed to submit production plan.")
+        st.session_state.saving_plan = False
+        st.exception(e)
 
-
-            except Exception as e:
-                st.error("❌ Failed to save.")
-                st.exception(e)
-
-    with col2:
-        if st.button("❌ Cancel"):
-            st.session_state.confirm_prod_submit = False
-            st.info("Submission cancelled.")
-            st.rerun()
 
 # ======================================
 # 📜 HISTORY
