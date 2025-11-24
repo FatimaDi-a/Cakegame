@@ -315,6 +315,12 @@ except Exception as e:
 
 channels = channels_df["channel"].tolist()
 
+
+# NEW: Packaging cost map
+cakes_resp = supabase.table("cakes").select("name, packaging_cost_per_unit_usd").execute()
+cakes_df2 = pd.DataFrame(cakes_resp.data or [])
+packaging_map = dict(zip(cakes_df2["name"], cakes_df2["packaging_cost_per_unit_usd"]))
+
 # ======================================
 # ⏱️ Normalize time units to hours
 # ======================================
@@ -520,7 +526,7 @@ ingredient_ok = all(
 )
 
 # ======================================
-# 💰 PROFIT CALCULATION
+# 💰 PROFIT CALCULATION (NOW MATCHING FINALIZE_ROUND)
 # ======================================
 if plan_df.empty:
     merged = pd.DataFrame()
@@ -547,15 +553,8 @@ else:
 
     # Fill numeric fields
     merged["qty"] = merged["qty"].astype(float).fillna(0)
-    if "price" in merged.columns:
-        merged["price"] = merged["price"].astype(float).fillna(0)
-    else:
-        merged["price"] = 0.0
-
-    if "demand" in merged.columns:
-        merged["demand"] = merged["demand"].astype(float).fillna(0)
-    else:
-        merged["demand"] = 0.0
+    merged["price"] = merged.get("price", 0).astype(float).fillna(0)
+    merged["demand"] = merged.get("demand", 0).astype(float).fillna(0)
 
     if transport_col:
         merged[transport_col] = merged[transport_col].astype(float).fillna(0)
@@ -570,9 +569,21 @@ else:
     merged["revenue"] = merged["sold_units"] * merged["price"]
     merged["transport_cost_total"] = merged["sold_units"] * merged[transport_col]
 
-    # Profit
-    merged["profit"] = merged["revenue"] - merged["transport_cost_total"]
+    # 🟧 PACKAGING COST (NEW)
+    merged["packaging_cost_per_unit_usd"] = merged["cake"].apply(
+        lambda c: packaging_map.get(c, 0)
+    )
+    merged["packaging_cost_total"] = merged["sold_units"] * merged["packaging_cost_per_unit_usd"]
+
+    # 🟩 Profit = revenue − transport − packaging
+    merged["profit"] = (
+        merged["revenue"]
+        - merged["transport_cost_total"]
+        - merged["packaging_cost_total"]
+    )
+
     profit_today = float(merged["profit"].sum())
+
 
 st.markdown("### 🧂 Ingredient Feasibility Check")
 
