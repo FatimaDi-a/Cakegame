@@ -859,8 +859,10 @@ try:
                 status = "✅ Finalized" if r.get("finalized") else "🧪 Test"
                 rnd = r.get("round_number", "?")
                 with st.expander(f"{status} — Round {rnd}"):
-                    df = pd.DataFrame(json.loads(r["prices_json"]))
+                    prices_raw = r["prices_json"]
+                    prices_list = prices_raw if isinstance(prices_raw, list) else json.loads(prices_raw)
 
+                    df = pd.DataFrame(prices_list)
                     pivot_df = df.pivot(
                         index="cake", columns="channel", values="price_usd"
                     )
