@@ -289,9 +289,6 @@ st.write(f"Welcome, **{st.session_state.team_name}** 👋")
 # =====================================
 # 🔍 OPTIONAL: Select Round to View
 # =====================================
-st.subheader("📅 View Leaderboard by Round")
-
-
 st.markdown(f"📊 Showing results up to **Round {current_round}**")
 
 # =====================================
